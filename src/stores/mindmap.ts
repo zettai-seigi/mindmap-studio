@@ -13,6 +13,7 @@ import type {
   Marker,
   Label,
   Position,
+  FloatingClipart,
 } from '../types';
 
 // Default theme
@@ -28,6 +29,41 @@ const defaultTheme: MapTheme = {
   },
   handDrawn: false,
   rainbowBranches: true,
+};
+
+// Sheet format settings interface
+export interface SheetFormat {
+  backgroundColor: string;
+  wallpaper: string;
+  wallpaperOpacity: number;
+  showLegend: boolean;
+  legendBackgroundColor: string;
+  taperedLines: boolean;
+  gradientColor: boolean;
+  multiBranchColor: boolean;
+  showLabel: boolean;
+  showNotes: boolean;
+  showHyperlink: boolean;
+  showAudioNotes: boolean;
+  showTaskInfo: boolean;
+  infoCardBackgroundColor: string;
+}
+
+const defaultSheetFormat: SheetFormat = {
+  backgroundColor: '#1e293b',
+  wallpaper: '',
+  wallpaperOpacity: 60,
+  showLegend: false,
+  legendBackgroundColor: '#ff6b6b',
+  taperedLines: false,
+  gradientColor: false,
+  multiBranchColor: false,
+  showLabel: true,
+  showNotes: false,
+  showHyperlink: false,
+  showAudioNotes: false,
+  showTaskInfo: false,
+  infoCardBackgroundColor: '#ff6b6b',
 };
 
 // Create a new node
@@ -51,6 +87,7 @@ function createMap(name: string): MindMap {
     name,
     root: rootNode,
     floatingTopics: [],
+    floatingCliparts: [],
     relationships: [],
     boundaries: [],
     summaries: [],
@@ -97,6 +134,8 @@ export const useMindMapStore = defineStore('mindmap', () => {
   const historyIndex = ref(-1);
   const isLocked = ref(false);
 
+  const sheetFormat = ref<SheetFormat>({ ...defaultSheetFormat });
+
   // ============================================
   // Getters
   // ============================================
@@ -107,6 +146,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
   const relationships = computed(() => currentMap.value.relationships);
   const boundaries = computed(() => currentMap.value.boundaries);
   const floatingTopics = computed(() => currentMap.value.floatingTopics);
+  const floatingCliparts = computed(() => currentMap.value.floatingCliparts);
 
   const selectedNodes = computed(() => {
     const nodes: MindMapNode[] = [];
@@ -210,12 +250,126 @@ export const useMindMapStore = defineStore('mindmap', () => {
     return newNode;
   }
 
+  function addFloatingClipart(position: Position, icon: string, clipartId: string): FloatingClipart {
+    saveHistory();
+    const newClipart: FloatingClipart = {
+      id: uuidv4(),
+      icon,
+      clipartId,
+      position,
+      size: 48,
+    };
+    currentMap.value.floatingCliparts.push(newClipart);
+    currentMap.value.updatedAt = Date.now();
+    return newClipart;
+  }
+
+  function removeFloatingClipart(clipartId: string) {
+    saveHistory();
+    currentMap.value.floatingCliparts = currentMap.value.floatingCliparts.filter(c => c.id !== clipartId);
+    currentMap.value.updatedAt = Date.now();
+  }
+
   function updateNodeText(nodeId: string, text: string) {
     const node = findNodeById(nodeId);
     if (!node) return;
 
     saveHistory();
     node.text = text;
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function updateNodeNotes(nodeId: string, notes: string) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    node.notes = notes;
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function addComment(nodeId: string, author: string, text: string) {
+    const node = findNodeById(nodeId);
+    if (!node) return null;
+
+    saveHistory();
+    if (!node.comments) {
+      node.comments = [];
+    }
+    const comment = {
+      id: uuidv4(),
+      author,
+      text,
+      createdAt: Date.now(),
+    };
+    node.comments.push(comment);
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+    return comment;
+  }
+
+  function deleteComment(nodeId: string, commentId: string) {
+    const node = findNodeById(nodeId);
+    if (!node || !node.comments) return;
+
+    saveHistory();
+    node.comments = node.comments.filter(c => c.id !== commentId);
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function updateTaskInfo(nodeId: string, taskInfo: Partial<{
+    assignee: string;
+    priority: number;
+    startDate: number | null;
+    duration: number;
+    progress: number;
+    isCheckpoint: boolean;
+    dependencies: string[];
+  }>) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+
+    // Initialize task if not exists
+    if (!node.task) {
+      node.task = {
+        progress: 0,
+        priority: 0,
+        completed: false,
+      };
+    }
+
+    // Update task properties
+    if (taskInfo.assignee !== undefined) node.task.assignee = taskInfo.assignee || undefined;
+    if (taskInfo.priority !== undefined) node.task.priority = taskInfo.priority;
+    if (taskInfo.startDate !== undefined) node.task.startDate = taskInfo.startDate || undefined;
+    if (taskInfo.duration !== undefined) node.task.duration = taskInfo.duration;
+    if (taskInfo.progress !== undefined) {
+      node.task.progress = taskInfo.progress;
+      node.task.completed = taskInfo.progress >= 100;
+    }
+    if (taskInfo.isCheckpoint !== undefined) node.task.isCheckpoint = taskInfo.isCheckpoint;
+    if (taskInfo.dependencies !== undefined) node.task.dependencies = taskInfo.dependencies;
+
+    // Calculate end date based on start + duration
+    if (node.task.startDate && node.task.duration) {
+      node.task.endDate = node.task.startDate + (node.task.duration * 24 * 60 * 60 * 1000);
+    }
+
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function clearTaskInfo(nodeId: string) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    node.task = undefined;
     node.updatedAt = Date.now();
     currentMap.value.updatedAt = Date.now();
   }
@@ -532,6 +686,18 @@ export const useMindMapStore = defineStore('mindmap', () => {
   }
 
   // ============================================
+  // Sheet Format Operations
+  // ============================================
+
+  function updateSheetFormat(updates: Partial<SheetFormat>) {
+    sheetFormat.value = { ...sheetFormat.value, ...updates };
+  }
+
+  function resetSheetFormat() {
+    sheetFormat.value = { ...defaultSheetFormat };
+  }
+
+  // ============================================
   // Map Operations
   // ============================================
 
@@ -591,6 +757,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     canvasState,
     viewState,
     isLocked,
+    sheetFormat,
 
     // Getters
     root,
@@ -599,6 +766,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     relationships,
     boundaries,
     floatingTopics,
+    floatingCliparts,
     selectedNodes,
     canUndo,
     canRedo,
@@ -609,7 +777,10 @@ export const useMindMapStore = defineStore('mindmap', () => {
     addChild,
     addSibling,
     addFloatingTopic,
+    addFloatingClipart,
+    removeFloatingClipart,
     updateNodeText,
+    updateNodeNotes,
     deleteNode,
     moveNode,
     toggleCollapse,
@@ -622,6 +793,14 @@ export const useMindMapStore = defineStore('mindmap', () => {
     removeMarker,
     addLabel,
     removeLabel,
+
+    // Comments
+    addComment,
+    deleteComment,
+
+    // Tasks
+    updateTaskInfo,
+    clearTaskInfo,
 
     // Relationships
     addRelationship,
@@ -651,6 +830,10 @@ export const useMindMapStore = defineStore('mindmap', () => {
     // Theme & Structure
     setTheme,
     setStructure,
+
+    // Sheet Format
+    updateSheetFormat,
+    resetSheetFormat,
 
     // Map operations
     newMap,

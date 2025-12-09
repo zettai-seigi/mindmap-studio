@@ -46,7 +46,7 @@ export type BranchDirection =
 
 export interface Marker {
   id: string;
-  category: 'priority' | 'progress' | 'flag' | 'star' | 'face' | 'arrow' | 'symbol' | 'month' | 'week' | 'people';
+  category: 'priority' | 'progress' | 'flag' | 'star' | 'face' | 'arrow' | 'symbol' | 'month' | 'week' | 'people' | 'clipart' | 'custom';
   value: string;
   color?: string;
 }
@@ -114,6 +114,7 @@ export interface MindMapNode {
   markers: Marker[];
   labels: Label[];
   notes?: string;
+  comments?: Comment[];
   hyperlink?: {
     type: 'web' | 'topic' | 'file';
     url: string;
@@ -141,14 +142,24 @@ export interface Attachment {
   size: number;
 }
 
+export interface Comment {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
 export interface TaskInfo {
   progress: number; // 0-100
   priority: number; // 1-9
   assignee?: string;
   startDate?: number;
+  duration?: number; // In days
   endDate?: number;
   completed: boolean;
-  dependencies?: string[]; // Node IDs
+  isCheckpoint?: boolean;
+  dependencies?: string[]; // Node IDs (predecessors)
 }
 
 // ============================================
@@ -184,6 +195,14 @@ export interface Summary {
   position: 'right' | 'left' | 'top' | 'bottom';
 }
 
+export interface FloatingClipart {
+  id: string;
+  icon: string;
+  clipartId: string;
+  position: Position;
+  size?: number;
+}
+
 // ============================================
 // Document/Map Types
 // ============================================
@@ -207,6 +226,7 @@ export interface MindMap {
   name: string;
   root: MindMapNode;
   floatingTopics: MindMapNode[];
+  floatingCliparts: FloatingClipart[];
   relationships: Relationship[];
   boundaries: Boundary[];
   summaries: Summary[];

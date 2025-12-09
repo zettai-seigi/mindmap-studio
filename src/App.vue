@@ -8,16 +8,6 @@ import { useMindMapStore } from './stores/mindmap';
 const store = useMindMapStore();
 
 const showSidebar = ref(true);
-const sidebarTab = ref<'format' | 'markers' | 'outline'>('format');
-
-const layouts = [
-  { id: 'mindmap', name: 'Mind Map', short: 'Mind', icon: '🧠' },
-  { id: 'orgchart', name: 'Org Chart', short: 'Org', icon: '🏢' },
-  { id: 'tree', name: 'Tree Chart', short: 'Tree', icon: '🌳' },
-  { id: 'logic', name: 'Logic Chart', short: 'Logic', icon: '➡️' },
-  { id: 'fishbone', name: 'Fishbone (Ishikawa)', short: 'Fish', icon: '🐟' },
-  { id: 'timeline', name: 'Timeline', short: 'Time', icon: '📅' },
-];
 
 onMounted(() => {
   // Initialize with a sample mind map
@@ -59,67 +49,119 @@ onMounted(() => {
         <MindMapCanvas />
 
         <!-- Zoom controls -->
-        <div class="absolute bottom-4 right-4 flex items-center gap-2 bg-white dark:bg-slate-800 rounded-lg shadow-lg p-2">
+        <div class="zoom-controls absolute bottom-4 right-4 flex items-center gap-1 rounded-lg p-1">
           <button
             @click="store.setZoom(store.viewState.zoom * 0.9)"
-            class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+            class="zoom-btn"
+            title="Zoom Out"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
             </svg>
           </button>
-          <span class="text-sm font-medium px-2 min-w-[60px] text-center">
+          <span class="zoom-level text-[12px] font-medium px-2 min-w-[50px] text-center">
             {{ Math.round(store.viewState.zoom * 100) }}%
           </span>
           <button
             @click="store.setZoom(store.viewState.zoom * 1.1)"
-            class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+            class="zoom-btn"
+            title="Zoom In"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
             </svg>
           </button>
+          <div class="zoom-divider" />
           <button
             @click="store.resetView()"
-            class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-xs"
+            class="zoom-btn px-2 text-[11px]"
+            title="Reset View"
           >
-            Reset
+            Fit
           </button>
         </div>
 
-        <!-- Structure selector -->
-        <div class="absolute top-4 left-4 bg-white dark:bg-slate-800 rounded-lg shadow-lg p-1 flex gap-1">
-          <button
-            v-for="layout in layouts"
-            :key="layout.id"
-            :title="layout.name"
-            :class="[
-              'p-2 rounded-md transition-all text-xs font-medium flex flex-col items-center gap-1 min-w-[60px]',
-              store.structure === layout.id
-                ? 'bg-blue-500 text-white shadow-md'
-                : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400'
-            ]"
-            @click="store.setStructure(layout.id as any)"
-          >
-            <span class="text-lg">{{ layout.icon }}</span>
-            <span class="text-[10px] leading-none">{{ layout.short }}</span>
-          </button>
-        </div>
       </div>
 
       <!-- Sidebar -->
-      <Sidebar v-if="showSidebar" :active-tab="sidebarTab" @change-tab="sidebarTab = $event" />
+      <Sidebar v-if="showSidebar" />
     </div>
 
     <!-- Status bar -->
-    <div class="h-6 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center px-4 text-xs text-slate-500">
-      <span>{{ store.currentMap.name }}</span>
-      <span class="mx-2">·</span>
-      <span>{{ store.canvasState.selectedNodeIds.length }} selected</span>
-      <span class="mx-2">·</span>
-      <span>{{ store.structure }}</span>
+    <div class="status-bar h-6 flex items-center px-4 text-[11px]">
+      <span class="status-item">{{ store.currentMap.name }}</span>
+      <span class="status-dot">·</span>
+      <span class="status-item">{{ store.canvasState.selectedNodeIds.length }} selected</span>
+      <span class="status-dot">·</span>
+      <span class="status-item capitalize">{{ store.structure }}</span>
       <span class="flex-1" />
-      <span v-if="store.canUndo">Ctrl+Z to undo</span>
+      <span v-if="store.canUndo" class="status-hint">⌘Z to undo</span>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Zoom Controls */
+.zoom-controls {
+  background: rgba(40, 40, 40, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.15),
+    0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.15s ease;
+}
+
+.zoom-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.zoom-btn:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.zoom-level {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.zoom-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 4px;
+}
+
+/* Status Bar */
+.status-bar {
+  background: rgba(40, 40, 40, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.status-item {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.status-dot {
+  color: rgba(255, 255, 255, 0.3);
+  margin: 0 8px;
+}
+
+.status-hint {
+  color: rgba(255, 255, 255, 0.4);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+</style>

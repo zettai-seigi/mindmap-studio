@@ -4,6 +4,7 @@ import { useMindMapStore } from '../stores/mindmap';
 import { layoutNodes, getAllRenderedNodes, findRenderedNodeById } from '../layouts';
 import type { RenderedNode, Position } from '../types';
 import ContextMenu from './ContextMenu.vue';
+import Minimap from './Minimap.vue';
 
 const store = useMindMapStore();
 
@@ -65,20 +66,31 @@ function render() {
 
   const canvas = canvasRef.value;
   const c = ctx.value;
+  const dpr = window.devicePixelRatio || 1;
 
-  // Clear canvas
-  c.clearRect(0, 0, canvas.width, canvas.height);
+  // Reset any transforms first
+  c.setTransform(1, 0, 0, 1, 0, 0);
 
-  // Apply zoom and pan
+  // Clear and fill entire canvas with background color
+  const sf = store.sheetFormat;
+  c.fillStyle = sf.backgroundColor;
+  c.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Apply DPR scaling, then zoom and pan
+  // Use CSS dimensions for coordinate system consistency
+  const cssWidth = canvasWidth.value;
+  const cssHeight = canvasHeight.value;
+
   c.save();
-  c.translate(canvas.width / 2, canvas.height / 2);
+  c.scale(dpr, dpr); // Scale for high-DPI displays
+  c.translate(cssWidth / 2, cssHeight / 2);
   c.scale(store.viewState.zoom, store.viewState.zoom);
   c.translate(
-    -canvas.width / 2 + store.viewState.panX,
-    -canvas.height / 2 + store.viewState.panY
+    -cssWidth / 2 + store.viewState.panX,
+    -cssHeight / 2 + store.viewState.panY
   );
 
-  // Draw background grid (optional)
+  // Draw wallpaper pattern (optional)
   drawGrid(c);
 
   // Draw connections
@@ -113,6 +125,11 @@ function render() {
     }
   });
 
+  // Draw floating cliparts
+  store.floatingCliparts.forEach(clipart => {
+    drawFloatingClipart(c, clipart);
+  });
+
   // Draw selection box
   if (store.canvasState.selectionBox) {
     const { start, end } = store.canvasState.selectionBox;
@@ -132,29 +149,56 @@ function render() {
 }
 
 function drawGrid(c: CanvasRenderingContext2D) {
+  const sf = store.sheetFormat;
+
+  // Only draw wallpaper patterns if selected
+  if (!sf.wallpaper) return;
+
   const gridSize = 50;
-  c.strokeStyle = '#e5e7eb';
-  c.lineWidth = 0.5;
+  const opacity = sf.wallpaperOpacity / 100;
 
-  for (let x = 0; x < canvasWidth.value * 2; x += gridSize) {
-    c.beginPath();
-    c.moveTo(x - canvasWidth.value / 2, -canvasHeight.value);
-    c.lineTo(x - canvasWidth.value / 2, canvasHeight.value * 2);
-    c.stroke();
-  }
+  if (sf.wallpaper === 'grid') {
+    c.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.15})`;
+    c.lineWidth = 0.5;
 
-  for (let y = 0; y < canvasHeight.value * 2; y += gridSize) {
-    c.beginPath();
-    c.moveTo(-canvasWidth.value, y - canvasHeight.value / 2);
-    c.lineTo(canvasWidth.value * 2, y - canvasHeight.value / 2);
-    c.stroke();
+    for (let x = 0; x < canvasWidth.value * 2; x += gridSize) {
+      c.beginPath();
+      c.moveTo(x - canvasWidth.value / 2, -canvasHeight.value);
+      c.lineTo(x - canvasWidth.value / 2, canvasHeight.value * 2);
+      c.stroke();
+    }
+
+    for (let y = 0; y < canvasHeight.value * 2; y += gridSize) {
+      c.beginPath();
+      c.moveTo(-canvasWidth.value, y - canvasHeight.value / 2);
+      c.lineTo(canvasWidth.value * 2, y - canvasHeight.value / 2);
+      c.stroke();
+    }
+  } else if (sf.wallpaper === 'dots') {
+    c.fillStyle = `rgba(255, 255, 255, ${opacity * 0.3})`;
+    for (let x = 0; x < canvasWidth.value * 2; x += gridSize) {
+      for (let y = 0; y < canvasHeight.value * 2; y += gridSize) {
+        c.beginPath();
+        c.arc(x - canvasWidth.value / 2, y - canvasHeight.value / 2, 2, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  } else if (sf.wallpaper === 'lines') {
+    c.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.1})`;
+    c.lineWidth = 1;
+    for (let y = 0; y < canvasHeight.value * 2; y += gridSize) {
+      c.beginPath();
+      c.moveTo(-canvasWidth.value, y - canvasHeight.value / 2);
+      c.lineTo(canvasWidth.value * 2, y - canvasHeight.value / 2);
+      c.stroke();
+    }
   }
 }
 
 function drawConnections(c: CanvasRenderingContext2D, rendered: RenderedNode) {
   rendered.children.forEach((child, index) => {
     const color = colors.value.branches[index % colors.value.branches.length] || '#3b82f6';
-    drawConnection(c, rendered, child, color);
+    drawConnection(c, rendered, child, color, index);
     drawConnections(c, child);
   });
 }
@@ -163,13 +207,103 @@ function drawConnection(
   c: CanvasRenderingContext2D,
   parent: RenderedNode,
   child: RenderedNode,
-  color: string
+  color: string,
+  _index: number
 ) {
   c.strokeStyle = color;
   c.lineWidth = Math.max(1.5, 3 - child.level * 0.5);
   c.lineCap = 'round';
   c.lineJoin = 'round';
 
+  const structure = store.structure;
+
+  // Org Chart / Tree: straight lines from bottom-center of parent to top-center of child
+  if (structure === 'orgchart' || structure === 'tree') {
+    const startX = parent.x + parent.width / 2;
+    const startY = parent.y + parent.height;
+    const endX = child.x + child.width / 2;
+    const endY = child.y;
+
+    // Draw elbow connection (straight lines with right angles)
+    const midY = (startY + endY) / 2;
+
+    c.beginPath();
+    c.moveTo(startX, startY);
+    c.lineTo(startX, midY);  // Vertical down from parent
+    c.lineTo(endX, midY);    // Horizontal to align with child
+    c.lineTo(endX, endY);    // Vertical down to child
+    c.stroke();
+    return;
+  }
+
+  // Logic Chart: straight horizontal lines with elbow
+  if (structure === 'logic') {
+    const startX = parent.x + parent.width;
+    const startY = parent.y + parent.height / 2;
+    const endX = child.x;
+    const endY = child.y + child.height / 2;
+
+    const midX = (startX + endX) / 2;
+
+    c.beginPath();
+    c.moveTo(startX, startY);
+    c.lineTo(midX, startY);  // Horizontal from parent
+    c.lineTo(midX, endY);    // Vertical to align with child
+    c.lineTo(endX, endY);    // Horizontal to child
+    c.stroke();
+    return;
+  }
+
+  // Fishbone: diagonal lines to the spine
+  if (structure === 'fishbone') {
+    const startX = parent.x + parent.width / 2;
+    const startY = parent.y + parent.height / 2;
+    const endX = child.x + child.width / 2;
+    const endY = child.y + child.height / 2;
+
+    // For main branches (level 1), draw diagonal to spine then along spine
+    if (child.level === 1) {
+      // Connect to spine (horizontal line at parent's Y level)
+      c.beginPath();
+      c.moveTo(endX, endY);
+      c.lineTo(endX, startY);  // Diagonal down to spine level
+      c.lineTo(startX, startY); // Along the spine
+      c.stroke();
+    } else {
+      // Sub-branches: simple diagonal
+      c.beginPath();
+      c.moveTo(startX, startY);
+      c.lineTo(endX, endY);
+      c.stroke();
+    }
+    return;
+  }
+
+  // Timeline: straight vertical/horizontal lines
+  if (structure === 'timeline') {
+    const startX = parent.x + parent.width / 2;
+    const startY = parent.y + parent.height / 2;
+    const endX = child.x + child.width / 2;
+    const endY = child.y + child.height / 2;
+
+    // Main timeline items: horizontal line to item, then vertical
+    if (child.level === 1) {
+      c.beginPath();
+      c.moveTo(startX, startY);
+      c.lineTo(endX, startY);  // Horizontal along timeline
+      c.lineTo(endX, endY);    // Vertical to item
+      c.stroke();
+    } else {
+      // Sub-items: vertical line
+      c.beginPath();
+      c.moveTo(startX, startY);
+      c.lineTo(endX, endY);
+      c.stroke();
+    }
+    return;
+  }
+
+  // Mind Map (default): curved S-lines
   const parentCenterY = parent.y + parent.height / 2;
   const childCenterY = child.y + child.height / 2;
 
@@ -374,14 +508,99 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode) {
     roundRect(c, x - 2, y - 2, width + 4, height + 4, level === 0 ? 11 : 7);
   }
 
-  // Text
+  // Calculate markers width first (markers go inside the node, left of text)
+  const markerSize = 16;
+  const markerSpacing = 2;
+  const markersCount = Math.min(node.markers.length, 5); // Show up to 5 markers
+  const markersWidth = markersCount > 0 ? (markersCount * markerSize) + ((markersCount - 1) * markerSpacing) + 6 : 0;
+
+  // Calculate content area
+  const padding = 10;
+  const contentStartX = x + padding + markersWidth;
+  const textMaxWidth = width - padding * 2 - markersWidth - (node.children.length > 0 ? 20 : 0);
+
+  // Draw markers inside the node, left side
+  if (node.markers.length > 0) {
+    let markerX = x + padding;
+    const markerY = y + height / 2;
+
+    node.markers.slice(0, 5).forEach(marker => {
+      // Handle clipart markers (they have category='clipart' and value contains the emoji)
+      if (marker.category === 'clipart' && marker.value) {
+        c.font = '14px -apple-system, BlinkMacSystemFont, sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(marker.value, markerX + markerSize / 2, markerY);
+        markerX += markerSize + markerSpacing;
+        return;
+      }
+
+      // Get marker display info based on ID
+      const markerInfo = getMarkerDisplay(marker.id, marker.color);
+
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+
+      if (markerInfo.type === 'badge') {
+        // Numbered badge (priority, month) - draw as small colored circle with number
+        c.fillStyle = markerInfo.bg || '#3b82f6';
+        c.beginPath();
+        c.arc(markerX + markerSize / 2, markerY, markerSize / 2 - 1, 0, Math.PI * 2);
+        c.fill();
+
+        c.fillStyle = markerInfo.textColor || 'white';
+        c.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
+        c.fillText(markerInfo.label || '', markerX + markerSize / 2, markerY);
+      } else if (markerInfo.type === 'emoji') {
+        // Emoji marker
+        c.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+        c.fillText(markerInfo.emoji || '', markerX + markerSize / 2, markerY);
+      } else if (markerInfo.type === 'icon') {
+        // Icon marker (stars, flags, arrows, etc.)
+        if (markerInfo.bg) {
+          c.fillStyle = markerInfo.bg;
+          c.beginPath();
+          c.arc(markerX + markerSize / 2, markerY, markerSize / 2 - 1, 0, Math.PI * 2);
+          c.fill();
+          c.fillStyle = 'white';
+        } else {
+          c.fillStyle = markerInfo.color || marker.color || '#3b82f6';
+        }
+        c.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+        c.fillText(markerInfo.icon || '', markerX + markerSize / 2, markerY);
+      } else {
+        // Default circle fallback
+        c.fillStyle = marker.color || '#f59e0b';
+        c.beginPath();
+        c.arc(markerX + markerSize / 2, markerY, 5, 0, Math.PI * 2);
+        c.fill();
+      }
+
+      markerX += markerSize + markerSpacing;
+    });
+  }
+
+  // Text - positioned after markers
   c.fillStyle = '#ffffff';
   c.font = level === 0 ? 'bold 16px sans-serif' : '14px sans-serif';
-  c.textAlign = 'center';
+  c.textAlign = 'left';
   c.textBaseline = 'middle';
 
-  const text = node.text.length > 20 ? node.text.slice(0, 18) + '...' : node.text;
-  c.fillText(text, x + width / 2, y + height / 2);
+  let displayText = node.text;
+  // Truncate text if too long
+  c.font = level === 0 ? 'bold 16px sans-serif' : '14px sans-serif';
+  while (c.measureText(displayText).width > textMaxWidth && displayText.length > 3) {
+    displayText = displayText.slice(0, -4) + '...';
+  }
+
+  const textX = markersWidth > 0 ? contentStartX : x + width / 2;
+  if (markersWidth > 0) {
+    c.textAlign = 'left';
+    c.fillText(displayText, textX, y + height / 2);
+  } else {
+    c.textAlign = 'center';
+    c.fillText(displayText, x + width / 2, y + height / 2);
+  }
 
   // Collapse indicator
   if (node.children.length > 0) {
@@ -396,6 +615,8 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode) {
 
     c.fillStyle = '#ffffff';
     c.font = '12px sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
     c.fillText(
       node.collapsed ? '+' : '−',
       indicatorX,
@@ -403,17 +624,170 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode) {
     );
   }
 
-  // Markers
-  if (node.markers.length > 0) {
-    let markerX = x + 5;
-    node.markers.slice(0, 3).forEach(marker => {
-      c.fillStyle = marker.color || '#f59e0b';
-      c.beginPath();
-      c.arc(markerX + 6, y - 6, 6, 0, Math.PI * 2);
-      c.fill();
-      markerX += 16;
-    });
+  // Notes and Comments indicators - show small icons at bottom-right if node has notes/comments
+  const hasNotes = node.notes && node.notes.trim().length > 0;
+  const hasComments = node.comments && node.comments.length > 0;
+
+  if (hasNotes || hasComments) {
+    c.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    c.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+
+    let iconOffset = 0;
+
+    // Comments indicator (show first if has both)
+    if (hasComments) {
+      const commentsIconX = x + width - 14 - iconOffset;
+      const commentsIconY = y + height - 10;
+      c.fillText('💬', commentsIconX, commentsIconY);
+      iconOffset += 16;
+    }
+
+    // Notes indicator
+    if (hasNotes) {
+      const notesIconX = x + width - 14 - iconOffset;
+      const notesIconY = y + height - 10;
+      c.fillText('📝', notesIconX, notesIconY);
+    }
   }
+
+  // Reset text alignment
+  c.textAlign = 'left';
+  c.textBaseline = 'alphabetic';
+}
+
+// Helper function to get marker display info
+function getMarkerDisplay(markerId: string, defaultColor?: string): {
+  type: 'badge' | 'emoji' | 'icon' | 'circle';
+  label?: string;
+  emoji?: string;
+  icon?: string;
+  bg?: string;
+  color?: string;
+  textColor?: string;
+} {
+  // Priority markers (p1-p9)
+  const priorityMatch = markerId.match(/^p(\d)$/);
+  if (priorityMatch && priorityMatch[1]) {
+    const colors: Record<string, string> = {
+      '1': '#ef4444', '2': '#f97316', '3': '#eab308', '4': '#22c55e',
+      '5': '#3b82f6', '6': '#8b5cf6', '7': '#64748b', '8': '#374151', '9': '#78716c'
+    };
+    const num = priorityMatch[1];
+    return { type: 'badge', label: num, bg: colors[num] || '#3b82f6', textColor: 'white' };
+  }
+
+  // Month markers
+  const monthMatch = markerId.match(/^month-(\d+)$/);
+  if (monthMatch && monthMatch[1]) {
+    return { type: 'badge', label: monthMatch[1], bg: '#e5e7eb', textColor: '#374151' };
+  }
+
+  // Face emojis
+  const faceEmojis: Record<string, string> = {
+    'face-happy': '😊', 'face-sad': '😢', 'face-angry': '😠', 'face-surprised': '😮',
+    'face-laugh': '😄', 'face-love': '😍', 'face-think': '🤔', 'face-cool': '😎'
+  };
+  if (faceEmojis[markerId]) {
+    return { type: 'emoji', emoji: faceEmojis[markerId] };
+  }
+
+  // Progress markers
+  const progressIcons: Record<string, { icon: string; color: string }> = {
+    'prog-0': { icon: '○', color: '#94a3b8' },
+    'prog-25': { icon: '◔', color: '#f59e0b' },
+    'prog-50': { icon: '◑', color: '#f59e0b' },
+    'prog-75': { icon: '◕', color: '#22c55e' },
+    'prog-100': { icon: '●', color: '#22c55e' },
+    'prog-start': { icon: '▶', color: '#3b82f6' },
+    'prog-pause': { icon: '⏸', color: '#f97316' },
+    'prog-cancel': { icon: '✕', color: '#ef4444' }
+  };
+  if (progressIcons[markerId]) {
+    return { type: 'icon', ...progressIcons[markerId] };
+  }
+
+  // Flag markers
+  if (markerId.startsWith('flag-')) {
+    const flagColors: Record<string, string> = {
+      'flag-red': '#ef4444', 'flag-orange': '#f97316', 'flag-yellow': '#eab308',
+      'flag-green': '#22c55e', 'flag-blue': '#3b82f6', 'flag-purple': '#8b5cf6', 'flag-gray': '#64748b'
+    };
+    return { type: 'icon', icon: '⚑', color: flagColors[markerId] || defaultColor };
+  }
+
+  // Star markers
+  if (markerId.startsWith('star-')) {
+    const starColors: Record<string, string> = {
+      'star-red': '#ef4444', 'star-orange': '#f97316', 'star-yellow': '#eab308',
+      'star-green': '#22c55e', 'star-blue': '#3b82f6', 'star-purple': '#8b5cf6'
+    };
+    return { type: 'icon', icon: '★', color: starColors[markerId] || defaultColor };
+  }
+
+  // Person markers
+  if (markerId.startsWith('person-')) {
+    const personColors: Record<string, string> = {
+      'person-red': '#ef4444', 'person-orange': '#f97316', 'person-yellow': '#eab308',
+      'person-green': '#22c55e', 'person-blue': '#3b82f6', 'person-purple': '#8b5cf6'
+    };
+    return { type: 'icon', icon: '👤', color: personColors[markerId] || defaultColor };
+  }
+
+  // Arrow markers
+  const arrowIcons: Record<string, { icon: string; color: string }> = {
+    'arrow-up': { icon: '↑', color: '#22c55e' },
+    'arrow-up-right': { icon: '↗', color: '#22c55e' },
+    'arrow-right': { icon: '→', color: '#3b82f6' },
+    'arrow-down-right': { icon: '↘', color: '#f97316' },
+    'arrow-down': { icon: '↓', color: '#ef4444' },
+    'arrow-down-left': { icon: '↙', color: '#ef4444' },
+    'arrow-left': { icon: '←', color: '#64748b' },
+    'arrow-up-left': { icon: '↖', color: '#22c55e' },
+    'arrow-refresh': { icon: '↻', color: '#3b82f6' }
+  };
+  if (arrowIcons[markerId]) {
+    return { type: 'icon', ...arrowIcons[markerId] };
+  }
+
+  // Symbol markers
+  const symbolIcons: Record<string, { icon: string; bg: string }> = {
+    'sym-plus': { icon: '+', bg: '#22c55e' },
+    'sym-minus': { icon: '−', bg: '#ef4444' },
+    'sym-question': { icon: '?', bg: '#3b82f6' },
+    'sym-info': { icon: 'i', bg: '#3b82f6' },
+    'sym-warning': { icon: '!', bg: '#f59e0b' },
+    'sym-error': { icon: '✕', bg: '#ef4444' },
+    'sym-check': { icon: '✓', bg: '#22c55e' },
+    'sym-stop': { icon: '⏹', bg: '#ef4444' }
+  };
+  if (symbolIcons[markerId]) {
+    return { type: 'icon', ...symbolIcons[markerId] };
+  }
+
+  // Default fallback
+  return { type: 'circle', color: defaultColor };
+}
+
+// ============================================
+// Draw Floating Clipart
+// ============================================
+
+function drawFloatingClipart(c: CanvasRenderingContext2D, clipart: { id: string; icon: string; position: { x: number; y: number }; size?: number }) {
+  const size = clipart.size || 48;
+  const x = clipart.position.x;
+  const y = clipart.position.y;
+
+  // Draw the clipart emoji centered at position
+  c.font = `${size}px -apple-system, BlinkMacSystemFont, sans-serif`;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(clipart.icon, x, y);
+
+  // Reset text alignment
+  c.textAlign = 'left';
+  c.textBaseline = 'alphabetic';
 }
 
 // ============================================
@@ -581,8 +955,11 @@ function handleDoubleClick(e: MouseEvent) {
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const screenX = (clickedNode.x - canvas.width / 2 + store.viewState.panX) * store.viewState.zoom + canvas.width / 2 + rect.left;
-    const screenY = (clickedNode.y - canvas.height / 2 + store.viewState.panY) * store.viewState.zoom + canvas.height / 2 + rect.top;
+    // Use CSS dimensions, not scaled canvas dimensions
+    const cssWidth = canvasWidth.value;
+    const cssHeight = canvasHeight.value;
+    const screenX = (clickedNode.x - cssWidth / 2 + store.viewState.panX) * store.viewState.zoom + cssWidth / 2 + rect.left;
+    const screenY = (clickedNode.y - cssHeight / 2 + store.viewState.panY) * store.viewState.zoom + cssHeight / 2 + rect.top;
 
     editingNode.value = {
       id: clickedNode.node.id,
@@ -626,6 +1003,53 @@ function handleContextMenu(e: MouseEvent) {
 
 function closeContextMenu() {
   contextMenu.value.show = false;
+}
+
+// Drag and drop handlers for clipart
+function handleDragOver(e: DragEvent) {
+  e.preventDefault();
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+function handleDrop(e: DragEvent) {
+  e.preventDefault();
+  if (!e.dataTransfer) return;
+
+  try {
+    const data = JSON.parse(e.dataTransfer.getData('application/json'));
+    if (data.type === 'clipart') {
+      // Get drop position in canvas coordinates
+      const pos = getMousePosition(e);
+
+      // Check if dropped on an existing node
+      const targetNode = findNodeAtPosition(pos);
+
+      if (targetNode) {
+        // Add clipart as a marker/icon to the node
+        store.addMarker(targetNode.node.id, {
+          id: data.id,
+          category: 'clipart',
+          value: data.icon,
+          color: '#3b82f6',
+        });
+      } else {
+        // Add clipart as a standalone floating clipart (just the icon)
+        store.addFloatingClipart(pos, data.icon, data.id);
+      }
+
+      updateLayout();
+      render();
+    }
+  } catch {
+    // Invalid drop data, ignore
+  }
+}
+
+function handleMinimapNavigate(panX: number, panY: number) {
+  store.setPan(panX, panY);
+  render();
 }
 
 function finishEditing() {
@@ -763,8 +1187,11 @@ function handleKeyDown(e: KeyboardEvent) {
           const canvas = canvasRef.value;
           if (canvas) {
             const rect = canvas.getBoundingClientRect();
-            const screenX = (node.x - canvas.width / 2 + store.viewState.panX) * store.viewState.zoom + canvas.width / 2 + rect.left;
-            const screenY = (node.y - canvas.height / 2 + store.viewState.panY) * store.viewState.zoom + canvas.height / 2 + rect.top;
+            // Use CSS dimensions, not scaled canvas dimensions
+            const cssWidth = canvasWidth.value;
+            const cssHeight = canvasHeight.value;
+            const screenX = (node.x - cssWidth / 2 + store.viewState.panX) * store.viewState.zoom + cssWidth / 2 + rect.left;
+            const screenY = (node.y - cssHeight / 2 + store.viewState.panY) * store.viewState.zoom + cssHeight / 2 + rect.top;
 
             editingNode.value = {
               id: node.node.id,
@@ -795,10 +1222,15 @@ function getMousePosition(e: MouseEvent): Position {
   if (!canvas) return { x: 0, y: 0 };
 
   const rect = canvas.getBoundingClientRect();
-  const x = (e.clientX - rect.left - canvas.width / 2) / store.viewState.zoom
-    + canvas.width / 2 - store.viewState.panX;
-  const y = (e.clientY - rect.top - canvas.height / 2) / store.viewState.zoom
-    + canvas.height / 2 - store.viewState.panY;
+
+  // Use CSS dimensions (canvasWidth/canvasHeight), not the scaled canvas.width/height
+  const cssWidth = canvasWidth.value;
+  const cssHeight = canvasHeight.value;
+
+  const x = (e.clientX - rect.left - cssWidth / 2) / store.viewState.zoom
+    + cssWidth / 2 - store.viewState.panX;
+  const y = (e.clientY - rect.top - cssHeight / 2) / store.viewState.zoom
+    + cssHeight / 2 - store.viewState.panY;
 
   return { x, y };
 }
@@ -833,9 +1265,7 @@ function resizeCanvas() {
   canvasRef.value.style.width = `${canvasWidth.value}px`;
   canvasRef.value.style.height = `${canvasHeight.value}px`;
 
-  if (ctx.value) {
-    ctx.value.scale(dpr, dpr);
-  }
+  // DPR scaling is handled in render() to avoid accumulation issues
 
   updateLayout();
   render();
@@ -882,12 +1312,21 @@ watch(
     render();
   }
 );
+
+// Watch sheet format for background/wallpaper changes
+watch(
+  () => store.sheetFormat,
+  () => {
+    render();
+  },
+  { deep: true }
+);
 </script>
 
 <template>
   <div
     ref="containerRef"
-    class="w-full h-full overflow-hidden bg-white dark:bg-slate-900 relative"
+    class="w-full h-full overflow-hidden relative"
   >
     <canvas
       ref="canvasRef"
@@ -901,6 +1340,8 @@ watch(
       @dblclick="handleDoubleClick"
       @wheel="handleWheel"
       @contextmenu="handleContextMenu"
+      @dragover="handleDragOver"
+      @drop="handleDrop"
     />
 
     <!-- Inline Text Editor -->
@@ -942,5 +1383,12 @@ watch(
         Cancel (Esc)
       </button>
     </div>
+
+    <!-- Minimap -->
+    <Minimap
+      :canvas-width="canvasWidth"
+      :canvas-height="canvasHeight"
+      @navigate="handleMinimapNavigate"
+    />
   </div>
 </template>
