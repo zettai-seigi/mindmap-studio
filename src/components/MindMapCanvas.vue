@@ -526,12 +526,20 @@ function handleMouseUp(e: MouseEvent) {
     store.canvasState.selectionBox = null;
   }
 
-  // Handle node drop - check if dropped on another node for reparenting
+  // Handle node drop
   if (isDragging.value && draggedNode.value) {
     const dropTarget = findNodeAtPosition(pos);
+
+    // Check if dropped on another node for reparenting
     if (dropTarget && dropTarget.node.id !== draggedNode.value.node.id) {
       // Reparent the node
       store.moveNode(draggedNode.value.node.id, dropTarget.node.id);
+    } else {
+      // Save the new position so it sticks
+      store.setNodePosition(draggedNode.value.node.id, {
+        x: draggedNode.value.x,
+        y: draggedNode.value.y,
+      });
     }
     // Re-layout after drag
     updateLayout();

@@ -34,10 +34,14 @@ export function layoutMindMap(
 ): RenderedNode {
   const cfg = { ...defaultConfig, ...config };
 
+  // Use manual position for root if set
+  const rootX = root.position?.x ?? cfg.centerX;
+  const rootY = root.position?.y ?? cfg.centerY;
+
   const rootRendered: RenderedNode = {
     node: root,
-    x: cfg.centerX,
-    y: cfg.centerY,
+    x: rootX,
+    y: rootY,
     width: cfg.nodeWidth * 1.5,
     height: cfg.nodeHeight * 1.2,
     collapsed: root.collapsed || false,
@@ -96,10 +100,14 @@ function layoutBranch(
   cfg: LayoutConfig,
   parent: RenderedNode
 ): RenderedNode {
+  // Use manual position if set
+  const finalX = node.position?.x ?? x;
+  const finalY = node.position?.y ?? y;
+
   const rendered: RenderedNode = {
     node,
-    x,
-    y,
+    x: finalX,
+    y: finalY,
     width: cfg.nodeWidth,
     height: cfg.nodeHeight,
     collapsed: node.collapsed || false,
@@ -206,10 +214,14 @@ function positionOrgChartNode(
   cfg: LayoutConfig,
   parent?: RenderedNode
 ): RenderedNode {
+  // Use manual position if set
+  const finalX = node.position?.x ?? x;
+  const finalY = node.position?.y ?? y;
+
   const rendered: RenderedNode = {
     node,
-    x,
-    y,
+    x: finalX,
+    y: finalY,
     width: cfg.nodeWidth,
     height: cfg.nodeHeight,
     collapsed: node.collapsed || false,

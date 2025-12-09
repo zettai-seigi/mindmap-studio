@@ -2,7 +2,7 @@
 import { useMindMapStore } from '../stores/mindmap';
 import {
   FileText, Save, FolderOpen, Undo, Redo, Plus, Trash2, Link,
-  Sparkles, PanelRight, Moon, Sun
+  Sparkles, PanelRight, Moon, Sun, LayoutGrid
 } from 'lucide-vue-next';
 import { ref } from 'vue';
 
@@ -37,6 +37,10 @@ function handleCreateRelationship() {
   if (selectedId) {
     store.startLinkMode(selectedId);
   }
+}
+
+function handleResetLayout() {
+  store.clearAllPositions();
 }
 </script>
 
@@ -119,6 +123,13 @@ function handleCreateRelationship() {
       @click="handleCreateRelationship"
     >
       <Link :size="18" class="text-slate-600 dark:text-slate-400" />
+    </button>
+    <button
+      class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+      title="Reset Layout (auto-arrange)"
+      @click="handleResetLayout"
+    >
+      <LayoutGrid :size="18" class="text-slate-600 dark:text-slate-400" />
     </button>
 
     <!-- Divider -->

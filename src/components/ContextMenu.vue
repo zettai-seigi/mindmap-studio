@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
 import {
   Plus, Copy, Trash2, Link, Box,
-  Edit3, Clipboard, Scissors, FolderPlus
+  Edit3, Clipboard, Scissors, FolderPlus, LayoutGrid
 } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -31,6 +31,7 @@ const menuItems = [
   { id: 'divider3', type: 'divider' },
   { id: 'add-relationship', label: 'Add Relationship', icon: Link, requiresNode: true },
   { id: 'add-boundary', label: 'Add Boundary', icon: Box, requiresNode: true },
+  { id: 'reset-position', label: 'Reset Position', icon: LayoutGrid, requiresNode: true },
   { id: 'divider4', type: 'divider' },
   { id: 'delete', label: 'Delete', icon: Trash2, shortcut: 'Del', requiresNode: true, notRoot: true, danger: true },
 ];
@@ -60,6 +61,9 @@ function handleClick(itemId: string) {
       break;
     case 'add-boundary':
       store.addBoundary([props.nodeId]);
+      break;
+    case 'reset-position':
+      store.clearNodePosition(props.nodeId);
       break;
   }
 

@@ -302,6 +302,37 @@ export const useMindMapStore = defineStore('mindmap', () => {
     node.updatedAt = Date.now();
   }
 
+  function setNodePosition(nodeId: string, position: Position) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    node.position = position;
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function clearNodePosition(nodeId: string) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    node.position = undefined;
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function clearAllPositions() {
+    saveHistory();
+    const clearPositions = (node: MindMapNode) => {
+      node.position = undefined;
+      node.children.forEach(clearPositions);
+    };
+    clearPositions(currentMap.value.root);
+    currentMap.value.floatingTopics.forEach(clearPositions);
+    currentMap.value.updatedAt = Date.now();
+  }
+
   // ============================================
   // Marker & Label Operations
   // ============================================
@@ -582,6 +613,9 @@ export const useMindMapStore = defineStore('mindmap', () => {
     deleteNode,
     moveNode,
     toggleCollapse,
+    setNodePosition,
+    clearNodePosition,
+    clearAllPositions,
 
     // Markers & Labels
     addMarker,
