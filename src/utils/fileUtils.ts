@@ -1,4 +1,4 @@
-import type { MindMap, MindMapNode } from '../types';
+import type { MindMap, MindMapNode, Marker } from '../types';
 import JSZip from 'jszip';
 
 // ============================================
@@ -115,9 +115,23 @@ function xmindTopicToNode(topic: XMindTopic): MindMapNode {
   if (topic.markers) {
     node.markers = topic.markers.map(m => {
       const parts = m.markerId.split('-');
+      const categoryMap: Record<string, Marker['category']> = {
+        priority: 'priority',
+        progress: 'progress',
+        flag: 'flag',
+        star: 'star',
+        face: 'face',
+        arrow: 'arrow',
+        symbol: 'symbol',
+        month: 'month',
+        week: 'week',
+        people: 'people',
+        clipart: 'clipart',
+      };
+      const category = categoryMap[parts[0] || ''] || 'custom';
       return {
         id: m.markerId,
-        category: (parts[0] as any) || 'custom',
+        category,
         value: parts.slice(1).join('-'),
         color: '#3b82f6',
       };
@@ -193,17 +207,13 @@ export async function exportToXMind(map: MindMap): Promise<Blob> {
 export async function importFromXMind(file: File): Promise<MindMap> {
   const zip = await JSZip.loadAsync(file);
 
-  // Debug: list all files in the zip
   const fileList = Object.keys(zip.files);
-  console.log('XMind file contents:', fileList);
 
   // Try to read content.json (XMind 8+ format)
   let contentFile = zip.file('content.json');
 
   if (contentFile) {
     const contentText = await contentFile.async('text');
-    console.log('content.json raw:', contentText.substring(0, 500));
-
     const contentRaw = JSON.parse(contentText);
 
     // Handle various XMind format variations
@@ -245,8 +255,7 @@ export async function importFromXMind(file: File): Promise<MindMap> {
     }
 
     if (!sheet?.rootTopic) {
-      console.error('Parsed content:', JSON.stringify(contentRaw, null, 2).substring(0, 1000));
-      throw new Error('Invalid XMind file: missing root topic. Check console for details.');
+      throw new Error('Invalid XMind file: missing root topic.');
     }
 
     const rootNode = xmindTopicToNode(sheet.rootTopic);
@@ -340,4 +349,127 @@ export async function readFileAsText(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file);
   });
+}
+
+// ============================================
+// PNG/SVG/PDF Export Functions
+// ============================================
+
+/**
+ * Export the canvas to PNG format
+ */
+export function exportToPNG(canvas: HTMLCanvasElement, filename: string = 'mindmap.png'): void {
+  const dataUrl = canvas.toDataURL('image/png', 1.0);
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = dataUrl;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/**
+ * Export the canvas to SVG format
+ * This creates an SVG by rendering the canvas content as an embedded image
+ */
+export function exportToSVG(canvas: HTMLCanvasElement, filename: string = 'mindmap.svg'): void {
+  const width = canvas.width;
+  const height = canvas.height;
+  const dataUrl = canvas.toDataURL('image/png');
+
+  const svgContent = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <image width="${width}" height="${height}" xlink:href="${dataUrl}"/>
+</svg>`;
+
+  const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+  downloadFile(blob, filename, 'image/svg+xml');
+}
+
+/**
+ * Export the canvas to PDF format
+ * This opens a print dialog with the canvas as a printable page
+ */
+export async function exportToPDF(canvas: HTMLCanvasElement, _filename: string = 'mindmap.pdf'): Promise<void> {
+  // Get canvas as data URL
+  const imgData = canvas.toDataURL('image/png', 1.0);
+
+  // Create a new window for printing
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Please allow popups to export PDF');
+    return;
+  }
+
+  // Get canvas dimensions
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.width / dpr;
+  const height = canvas.height / dpr;
+
+  // Write HTML content for print
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>MindMap Export</title>
+      <style>
+        @media print {
+          body { margin: 0; padding: 0; }
+          img { max-width: 100%; max-height: 100vh; }
+        }
+        body {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100vh;
+          margin: 0;
+          background: white;
+        }
+        img {
+          max-width: 100%;
+          height: auto;
+        }
+      </style>
+    </head>
+    <body>
+      <img src="${imgData}" width="${width}" height="${height}" />
+      <script>
+        window.onload = function() {
+          setTimeout(function() {
+            window.print();
+          }, 100);
+        };
+      </script>
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
+
+/**
+ * Export to Markdown format
+ */
+export function exportToMarkdown(map: MindMap): string {
+  let markdown = `# ${map.name}\n\n`;
+
+  function nodeToMarkdown(node: MindMapNode, level: number = 0): string {
+    const prefix = level === 0 ? '' : '  '.repeat(level - 1) + '- ';
+    let md = level === 0 ? `## ${node.text}\n\n` : `${prefix}${node.text}\n`;
+
+    if (node.notes) {
+      const indent = '  '.repeat(level);
+      md += `${indent}> ${node.notes.replace(/\n/g, `\n${indent}> `)}\n`;
+    }
+
+    node.children.forEach(child => {
+      md += nodeToMarkdown(child, level + 1);
+    });
+
+    return md;
+  }
+
+  markdown += nodeToMarkdown(map.root);
+
+  return markdown;
 }

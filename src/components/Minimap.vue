@@ -113,7 +113,6 @@ function renderNodes() {
 function render() {
   if (!ctx.value || !minimapRef.value || !minimapData.value) return;
 
-  const canvas = minimapRef.value;
   const c = ctx.value;
 
   // Check if we need to re-render nodes (map changed)
@@ -225,15 +224,15 @@ onUnmounted(() => {
 
 // Use watchEffect for immediate reactivity - it auto-tracks dependencies
 watchEffect(() => {
-  // Access reactive values to track them
-  const _zoom = store.viewState.zoom;
-  const _panX = store.viewState.panX;
-  const _panY = store.viewState.panY;
-  const _structure = store.structure;
-  const _map = store.currentMap;
-  const _width = props.canvasWidth;
-  const _height = props.canvasHeight;
-  const _visible = props.visible;
+  // Access reactive values to track them (void to suppress unused warnings)
+  void store.viewState.zoom;
+  void store.viewState.panX;
+  void store.viewState.panY;
+  void store.structure;
+  void store.currentMap;
+  void props.canvasWidth;
+  void props.canvasHeight;
+  void props.visible;
 
   // Render immediately
   render();

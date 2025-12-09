@@ -116,6 +116,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     draggingNodeId: null,
     dragOffset: null,
     selectionBox: null,
+    selectedRelationshipId: null,
     linkMode: {
       active: false,
       sourceId: null,
@@ -290,6 +291,32 @@ export const useMindMapStore = defineStore('mindmap', () => {
     currentMap.value.updatedAt = Date.now();
   }
 
+  function updateNodeStyle(nodeId: string, style: Partial<{
+    shape: string;
+    backgroundColor: string;
+    borderColor: string;
+    borderWidth: number;
+    textColor: string;
+    fontSize: number;
+    fontFamily: string;
+    fontWeight: 'normal' | 'bold';
+    fontStyle: 'normal' | 'italic';
+    padding: number;
+    shadow: boolean;
+    opacity: number;
+  }>) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    if (!node.style) {
+      node.style = {};
+    }
+    Object.assign(node.style, style);
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
   function addComment(nodeId: string, author: string, text: string) {
     const node = findNodeById(nodeId);
     if (!node) return null;
@@ -456,6 +483,65 @@ export const useMindMapStore = defineStore('mindmap', () => {
     node.updatedAt = Date.now();
   }
 
+  function expandNode(nodeId: string) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    if (node.collapsed) {
+      node.collapsed = false;
+      node.updatedAt = Date.now();
+    }
+  }
+
+  function expandParentsOf(nodeId: string) {
+    let parent = findParentNode(nodeId);
+    while (parent) {
+      if (parent.collapsed) {
+        parent.collapsed = false;
+        parent.updatedAt = Date.now();
+      }
+      parent = findParentNode(parent.id);
+    }
+  }
+
+  function moveNodeUp(nodeId: string) {
+    const parent = findParentNode(nodeId);
+    if (!parent) return;
+
+    const index = parent.children.findIndex(c => c.id === nodeId);
+    if (index <= 0) return;
+
+    const currentNode = parent.children[index];
+    const prevNode = parent.children[index - 1];
+    if (!currentNode || !prevNode) return;
+
+    saveHistory();
+    // Swap with previous sibling
+    parent.children[index - 1] = currentNode;
+    parent.children[index] = prevNode;
+    parent.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function moveNodeDown(nodeId: string) {
+    const parent = findParentNode(nodeId);
+    if (!parent) return;
+
+    const index = parent.children.findIndex(c => c.id === nodeId);
+    if (index === -1 || index >= parent.children.length - 1) return;
+
+    const currentNode = parent.children[index];
+    const nextNode = parent.children[index + 1];
+    if (!currentNode || !nextNode) return;
+
+    saveHistory();
+    // Swap with next sibling
+    parent.children[index] = nextNode;
+    parent.children[index + 1] = currentNode;
+    parent.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
   function setNodePosition(nodeId: string, position: Position) {
     const node = findNodeById(nodeId);
     if (!node) return;
@@ -570,6 +656,27 @@ export const useMindMapStore = defineStore('mindmap', () => {
     currentMap.value.updatedAt = Date.now();
   }
 
+  function updateRelationship(relationshipId: string, updates: Partial<{
+    label: string;
+    labelOffset: Position;
+    style: 'solid' | 'dashed' | 'dotted';
+    color: string;
+    curvature: number;
+    startArrow: boolean;
+    endArrow: boolean;
+    controlPoint1: Position;
+    controlPoint2: Position;
+  }>, saveToHistory: boolean = true) {
+    const rel = currentMap.value.relationships.find(r => r.id === relationshipId);
+    if (!rel) return;
+
+    if (saveToHistory) {
+      saveHistory();
+    }
+    Object.assign(rel, updates);
+    currentMap.value.updatedAt = Date.now();
+  }
+
   // ============================================
   // Boundary Operations
   // ============================================
@@ -632,6 +739,14 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
   function clearSelection() {
     canvasState.value.selectedNodeIds = [];
+    canvasState.value.selectedRelationshipId = null;
+  }
+
+  function selectRelationship(relationshipId: string | null) {
+    canvasState.value.selectedRelationshipId = relationshipId;
+    if (relationshipId) {
+      canvasState.value.selectedNodeIds = [];
+    }
   }
 
   function startEditing(nodeId: string) {
@@ -781,9 +896,14 @@ export const useMindMapStore = defineStore('mindmap', () => {
     removeFloatingClipart,
     updateNodeText,
     updateNodeNotes,
+    updateNodeStyle,
     deleteNode,
     moveNode,
+    moveNodeUp,
+    moveNodeDown,
     toggleCollapse,
+    expandNode,
+    expandParentsOf,
     setNodePosition,
     clearNodePosition,
     clearAllPositions,
@@ -805,6 +925,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     // Relationships
     addRelationship,
     removeRelationship,
+    updateRelationship,
 
     // Boundaries
     addBoundary,
@@ -816,6 +937,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
     // Selection
     selectNode,
+    selectRelationship,
     clearSelection,
     startEditing,
     stopEditing,

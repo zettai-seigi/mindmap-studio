@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
+import type { StructureType } from '../types';
 import {
   Plus, Copy, Trash2, Link, Box,
   Edit3, Clipboard, Scissors, FolderPlus, LayoutGrid, ChevronRight
@@ -89,7 +90,7 @@ function handleClick(itemId: string) {
 }
 
 function handleStructureChange(layoutId: string) {
-  store.setStructure(layoutId as any);
+  store.setStructure(layoutId as StructureType);
   emit('close');
 }
 

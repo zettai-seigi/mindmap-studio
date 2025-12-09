@@ -171,11 +171,15 @@ export interface Relationship {
   sourceId: string;
   targetId: string;
   label?: string;
+  labelOffset?: Position; // Offset from the curve midpoint for draggable label
   style: 'solid' | 'dashed' | 'dotted';
   color: string;
   curvature: number;
   startArrow: boolean;
   endArrow: boolean;
+  // Bezier control points (relative offsets from midpoint)
+  controlPoint1?: Position;
+  controlPoint2?: Position;
 }
 
 export interface Boundary {
@@ -270,6 +274,7 @@ export interface CanvasState {
   draggingNodeId: string | null;
   dragOffset: Position | null;
   selectionBox: { start: Position; end: Position } | null;
+  selectedRelationshipId: string | null;
   linkMode: {
     active: boolean;
     sourceId: string | null;

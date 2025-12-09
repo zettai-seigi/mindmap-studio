@@ -1,13 +1,34 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import MindMapCanvas from './components/MindMapCanvas.vue';
 import Toolbar from './components/Toolbar.vue';
 import Sidebar from './components/Sidebar.vue';
 import Minimap from './components/Minimap.vue';
+import OutlineView from './components/OutlineView.vue';
+import SearchPanel from './components/SearchPanel.vue';
 import { useMindMapStore } from './stores/mindmap';
-import { Eye, EyeOff, Minus, Plus, Equal, SlidersHorizontal } from 'lucide-vue-next';
+import { Eye, EyeOff, Minus, Plus, Equal, SlidersHorizontal, Map, List, Focus, Search } from 'lucide-vue-next';
 
 const store = useMindMapStore();
+
+// Search panel visibility
+const showSearch = ref(false);
+
+function toggleSearch() {
+  showSearch.value = !showSearch.value;
+}
+
+function closeSearch() {
+  showSearch.value = false;
+}
+
+// Global keyboard handler for Cmd+F
+function handleGlobalKeyDown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    e.preventDefault();
+    toggleSearch();
+  }
+}
 
 // Canvas ref to get dimensions
 const canvasRef = ref<InstanceType<typeof MindMapCanvas> | null>(null);
@@ -19,8 +40,29 @@ const canvasHeight = computed(() => canvasRef.value?.canvasHeight || window.inne
 // Minimap visibility
 const showMinimap = ref(true);
 
+// View mode: 'mindmap' or 'outline'
+const viewMode = ref<'mindmap' | 'outline'>('mindmap');
+
+// Focus mode
+const focusMode = ref(false);
+
+// Tag filter
+const activeTagFilters = ref<string[]>([]);
+
+function handleTagFilterChange(tags: string[]) {
+  activeTagFilters.value = tags;
+}
+
 function toggleMinimap() {
   showMinimap.value = !showMinimap.value;
+}
+
+function setViewMode(mode: 'mindmap' | 'outline') {
+  viewMode.value = mode;
+}
+
+function toggleFocusMode() {
+  focusMode.value = !focusMode.value;
 }
 
 function zoomIn() {
@@ -37,7 +79,7 @@ function resetZoom() {
 }
 
 function openFilter() {
-  console.log('Filter clicked - functionality coming soon');
+  // TODO: Implement filter functionality
 }
 
 function handleMinimapNavigate(panX: number, panY: number) {
@@ -52,6 +94,9 @@ function toggleSidebar() {
 }
 
 onMounted(() => {
+  // Add global keyboard listener for search
+  window.addEventListener('keydown', handleGlobalKeyDown);
+
   // Initialize with a sample mind map
   store.newMap('My Mind Map');
 
@@ -77,58 +122,108 @@ onMounted(() => {
     store.addChild(child3.id, 'Sub-topic 3.1');
   }
 });
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeyDown);
+});
 </script>
 
 <template>
   <div class="h-screen w-screen flex flex-col bg-slate-800 overflow-hidden">
     <!-- Toolbar -->
-    <Toolbar @toggle-sidebar="toggleSidebar" />
+    <Toolbar :canvas-ref="canvasRef?.canvasRef" @toggle-sidebar="toggleSidebar" />
 
     <!-- Main content -->
     <div class="main-content">
-      <!-- Canvas -->
-      <div class="canvas-container">
-        <MindMapCanvas ref="canvasRef" />
+      <!-- Mind Map View -->
+      <div v-show="viewMode === 'mindmap'" class="canvas-container">
+        <MindMapCanvas ref="canvasRef" :focus-mode="focusMode" :tag-filters="activeTagFilters" />
 
         <!-- Minimap Navigator -->
         <Minimap
           :canvas-width="canvasWidth"
           :canvas-height="canvasHeight"
-          :visible="showMinimap"
+          :visible="showMinimap && viewMode === 'mindmap'"
           @navigate="handleMinimapNavigate"
         />
+      </div>
+
+      <!-- Outline View -->
+      <div v-show="viewMode === 'outline'" class="outline-container">
+        <OutlineView />
       </div>
 
       <!-- Sidebar (overlays canvas) -->
       <Transition name="sidebar-slide">
         <div v-if="showSidebar" class="sidebar-wrapper">
-          <Sidebar />
+          <Sidebar @filter-change="handleTagFilterChange" />
+        </div>
+      </Transition>
+
+      <!-- Search Panel -->
+      <Transition name="search-fade">
+        <div v-if="showSearch" class="search-wrapper" @click.self="closeSearch">
+          <SearchPanel @close="closeSearch" />
         </div>
       </Transition>
     </div>
 
     <!-- Footer bar with status and minimap controls -->
     <div class="footer-bar">
-      <!-- Left: Map tab -->
+      <!-- Left: Map tab and view mode -->
       <div class="footer-left">
         <div class="map-tab">
           <span class="map-tab-name">{{ store.currentMap.name }}</span>
         </div>
+
+        <!-- View Mode Toggle -->
+        <div class="view-toggle">
+          <button
+            class="view-btn"
+            :class="{ active: viewMode === 'mindmap' }"
+            title="Mind Map View"
+            @click="setViewMode('mindmap')"
+          >
+            <Map :size="14" />
+          </button>
+          <button
+            class="view-btn"
+            :class="{ active: viewMode === 'outline' }"
+            title="Outline View"
+            @click="setViewMode('outline')"
+          >
+            <List :size="14" />
+          </button>
+        </div>
+
+        <!-- Focus Mode Toggle -->
+        <button
+          v-if="viewMode === 'mindmap'"
+          class="footer-btn focus-btn"
+          :class="{ active: focusMode }"
+          title="Focus Mode"
+          @click="toggleFocusMode"
+        >
+          <Focus :size="14" />
+        </button>
       </div>
 
       <!-- Center: Status info -->
       <div class="footer-center">
         <span class="status-item">{{ store.canvasState.selectedNodeIds.length }} selected</span>
         <span class="status-dot">·</span>
-        <span class="status-item capitalize">{{ store.structure }}</span>
+        <span class="status-item capitalize">{{ viewMode === 'outline' ? 'Outline' : store.structure }}</span>
+        <span v-if="focusMode && viewMode === 'mindmap'" class="status-dot">·</span>
+        <span v-if="focusMode && viewMode === 'mindmap'" class="status-focus">Focus Mode</span>
         <span v-if="store.canUndo" class="status-dot">·</span>
         <span v-if="store.canUndo" class="status-hint">⌘Z to undo</span>
       </div>
 
       <!-- Right: Minimap controls -->
       <div class="footer-right">
-        <!-- Toggle Minimap -->
+        <!-- Toggle Minimap (only in mindmap view) -->
         <button
+          v-if="viewMode === 'mindmap'"
           class="footer-btn"
           :class="{ active: showMinimap }"
           :title="showMinimap ? 'Hide Navigator' : 'Show Navigator'"
@@ -138,27 +233,32 @@ onMounted(() => {
           <EyeOff v-else :size="14" />
         </button>
 
-        <div class="footer-divider" />
+        <div v-if="viewMode === 'mindmap'" class="footer-divider" />
 
         <!-- Zoom Out -->
-        <button class="footer-btn" title="Zoom Out" @click="zoomOut">
+        <button v-if="viewMode === 'mindmap'" class="footer-btn" title="Zoom Out" @click="zoomOut">
           <Minus :size="14" />
         </button>
 
         <!-- Zoom Display -->
-        <span class="zoom-display">{{ Math.round(store.viewState.zoom * 100) }}%</span>
+        <span v-if="viewMode === 'mindmap'" class="zoom-display">{{ Math.round(store.viewState.zoom * 100) }}%</span>
 
         <!-- Zoom In -->
-        <button class="footer-btn" title="Zoom In" @click="zoomIn">
+        <button v-if="viewMode === 'mindmap'" class="footer-btn" title="Zoom In" @click="zoomIn">
           <Plus :size="14" />
         </button>
 
         <!-- Reset Zoom -->
-        <button class="footer-btn" title="Reset to 100%" @click="resetZoom">
+        <button v-if="viewMode === 'mindmap'" class="footer-btn" title="Reset to 100%" @click="resetZoom">
           <Equal :size="12" />
         </button>
 
-        <div class="footer-divider" />
+        <div v-if="viewMode === 'mindmap'" class="footer-divider" />
+
+        <!-- Search -->
+        <button class="footer-btn" :class="{ active: showSearch }" title="Search (Cmd+F)" @click="toggleSearch">
+          <Search :size="14" />
+        </button>
 
         <!-- Filter -->
         <button class="footer-btn" title="Filter" @click="openFilter">
@@ -185,6 +285,7 @@ onMounted(() => {
 .footer-left {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .map-tab {
@@ -227,6 +328,11 @@ onMounted(() => {
 .status-hint {
   color: rgba(255, 255, 255, 0.4);
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.status-focus {
+  color: #f59e0b;
+  font-weight: 500;
 }
 
 .footer-right {
@@ -290,6 +396,45 @@ onMounted(() => {
   background: inherit;
 }
 
+/* Outline container */
+.outline-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* View mode toggle */
+.view-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+  padding: 2px;
+}
+
+.view-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border-radius: 3px;
+  color: rgba(255, 255, 255, 0.5);
+  transition: all 0.15s ease;
+}
+
+.view-btn:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.view-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #60a5fa;
+}
+
+.focus-btn.active {
+  color: #f59e0b;
+}
+
 /* Sidebar overlay */
 .sidebar-wrapper {
   position: absolute;
@@ -308,5 +453,28 @@ onMounted(() => {
 .sidebar-slide-enter-from,
 .sidebar-slide-leave-to {
   transform: translateX(100%);
+}
+
+/* Search wrapper */
+.search-wrapper {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 20;
+}
+
+/* Search fade transition */
+.search-fade-enter-active,
+.search-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.search-fade-enter-from,
+.search-fade-leave-to {
+  opacity: 0;
 }
 </style>

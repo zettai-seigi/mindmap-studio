@@ -5,6 +5,11 @@ import { layoutNodes, getAllRenderedNodes, findRenderedNodeById } from '../layou
 import type { RenderedNode, Position } from '../types';
 import ContextMenu from './ContextMenu.vue';
 
+const props = defineProps<{
+  focusMode?: boolean;
+  tagFilters?: string[];
+}>();
+
 const store = useMindMapStore();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -23,6 +28,26 @@ const dragStart = ref<Position | null>(null);
 const lastMousePos = ref<Position | null>(null);
 const draggedNode = ref<RenderedNode | null>(null);
 const dragOffset = ref<Position>({ x: 0, y: 0 });
+
+// Relationship control point dragging
+const draggingControlPoint = ref<{ relId: string; point: 1 | 2 } | null>(null);
+const draggingRelationshipLabel = ref<{ relId: string; startPos: Position } | null>(null);
+const controlPointRadius = 8;
+
+// Computed: selected relationship from store
+const selectedRelationshipId = computed(() => store.canvasState.selectedRelationshipId);
+
+// Relationship label editing state
+const editingRelationshipLabel = ref<{
+  relId: string;
+  x: number;
+  y: number;
+  text: string;
+} | null>(null);
+const relationshipLabelInputRef = ref<HTMLInputElement | null>(null);
+
+// Store label positions for hit detection (updated during render)
+const relationshipLabelPositions = new Map<string, { x: number; y: number; baseX: number; baseY: number }>();
 
 // Context menu state
 const contextMenu = ref<{ show: boolean; x: number; y: number; nodeId: string | null }>({
@@ -338,6 +363,74 @@ function drawConnection(
   c.stroke();
 }
 
+function getRelationshipControlPoints(rel: typeof store.relationships[0], startX: number, startY: number, endX: number, endY: number) {
+  const midX = (startX + endX) / 2;
+  const midY = (startY + endY) / 2;
+
+  // Default control points create a smooth curve
+  const defaultOffset = 50 * (rel.curvature || 0.3);
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const perpX = -dy * 0.3;
+  const perpY = dx * 0.3;
+
+  // Control point 1 (near source)
+  const cp1 = rel.controlPoint1 || {
+    x: midX + perpX - defaultOffset * 0.5,
+    y: midY + perpY - defaultOffset
+  };
+
+  // Control point 2 (near target)
+  const cp2 = rel.controlPoint2 || {
+    x: midX - perpX + defaultOffset * 0.5,
+    y: midY - perpY - defaultOffset
+  };
+
+  return { cp1, cp2, midX, midY };
+}
+
+// Find intersection point of a line from center to a point with the node's rectangular boundary
+function getNodeEdgePoint(
+  node: { x: number; y: number; width: number; height: number },
+  targetX: number,
+  targetY: number
+): Position {
+  const centerX = node.x + node.width / 2;
+  const centerY = node.y + node.height / 2;
+
+  const dx = targetX - centerX;
+  const dy = targetY - centerY;
+
+  if (dx === 0 && dy === 0) {
+    return { x: centerX, y: centerY };
+  }
+
+  const halfWidth = node.width / 2 + 4; // Add small padding
+  const halfHeight = node.height / 2 + 4;
+
+  // Calculate intersection with rectangle edges
+  let t = 1;
+
+  if (dx !== 0) {
+    const tLeft = -halfWidth / dx;
+    const tRight = halfWidth / dx;
+    if (tLeft > 0) t = Math.min(t, tLeft);
+    if (tRight > 0) t = Math.min(t, tRight);
+  }
+
+  if (dy !== 0) {
+    const tTop = -halfHeight / dy;
+    const tBottom = halfHeight / dy;
+    if (tTop > 0) t = Math.min(t, tTop);
+    if (tBottom > 0) t = Math.min(t, tBottom);
+  }
+
+  return {
+    x: centerX + dx * t,
+    y: centerY + dy * t
+  };
+}
+
 function drawRelationships(c: CanvasRenderingContext2D) {
   store.relationships.forEach(rel => {
     const sourceNode = renderedRoot.value
@@ -349,8 +442,10 @@ function drawRelationships(c: CanvasRenderingContext2D) {
 
     if (!sourceNode || !targetNode) return;
 
+    const isSelected = selectedRelationshipId.value === rel.id;
+
     c.strokeStyle = rel.color;
-    c.lineWidth = 2;
+    c.lineWidth = isSelected ? 3 : 2;
     c.setLineDash(rel.style === 'dashed' ? [8, 4] : rel.style === 'dotted' ? [2, 2] : []);
 
     const startX = sourceNode.x + sourceNode.width / 2;
@@ -358,30 +453,115 @@ function drawRelationships(c: CanvasRenderingContext2D) {
     const endX = targetNode.x + targetNode.width / 2;
     const endY = targetNode.y + targetNode.height / 2;
 
-    // Curved line
-    const midX = (startX + endX) / 2;
-    const midY = (startY + endY) / 2 - 50 * rel.curvature;
+    // Get control points
+    const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
 
+    // Calculate edge points for arrows (where line meets node boundary)
+    const startEdge = getNodeEdgePoint(sourceNode, cp1.x, cp1.y);
+    const endEdge = getNodeEdgePoint(targetNode, cp2.x, cp2.y);
+
+    // Draw cubic Bezier curve (still from center to center for smooth curve)
     c.beginPath();
     c.moveTo(startX, startY);
-    c.quadraticCurveTo(midX, midY, endX, endY);
+    c.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, endX, endY);
     c.stroke();
 
-    // Draw arrow
+    // Draw end arrow (at target node edge)
     if (rel.endArrow) {
-      const angle = Math.atan2(endY - midY, endX - midX);
-      drawArrow(c, endX, endY, angle, rel.color);
+      const angle = Math.atan2(endEdge.y - cp2.y, endEdge.x - cp2.x);
+      drawArrow(c, endEdge.x, endEdge.y, angle, rel.color);
     }
 
-    // Draw label
-    if (rel.label) {
-      c.fillStyle = rel.color;
+    // Draw start arrow (at source node edge)
+    if (rel.startArrow) {
+      const angle = Math.atan2(startEdge.y - cp1.y, startEdge.x - cp1.x);
+      drawArrow(c, startEdge.x, startEdge.y, angle, rel.color);
+    }
+
+    // Draw label at curve midpoint (or with offset if set)
+    // Calculate base position at t=0.5 on cubic Bezier
+    const t = 0.5;
+    const baseLabelX = Math.pow(1-t, 3) * startX + 3 * Math.pow(1-t, 2) * t * cp1.x + 3 * (1-t) * Math.pow(t, 2) * cp2.x + Math.pow(t, 3) * endX;
+    const baseLabelY = Math.pow(1-t, 3) * startY + 3 * Math.pow(1-t, 2) * t * cp1.y + 3 * (1-t) * Math.pow(t, 2) * cp2.y + Math.pow(t, 3) * endY;
+
+    // Apply offset if exists
+    const labelX = baseLabelX + (rel.labelOffset?.x || 0);
+    const labelY = baseLabelY + (rel.labelOffset?.y || 0);
+
+    // Store label position for hit detection
+    relationshipLabelPositions.set(rel.id, {
+      x: labelX,
+      y: labelY,
+      baseX: baseLabelX,
+      baseY: baseLabelY
+    });
+
+    if (rel.label || isSelected) {
+      const labelText = rel.label || (isSelected ? 'Double-click to add label' : '');
       c.font = '12px sans-serif';
+      const metrics = c.measureText(labelText);
+      const padding = 6;
+      const labelWidth = metrics.width + padding * 2;
+      const labelHeight = 20;
+
+      // Draw label background
+      c.fillStyle = rel.label ? 'rgba(30, 30, 30, 0.9)' : 'rgba(30, 30, 30, 0.5)';
+      c.beginPath();
+      c.roundRect(labelX - labelWidth / 2, labelY - labelHeight / 2 - 2, labelWidth, labelHeight, 4);
+      c.fill();
+
+      // Draw label border when selected
+      if (isSelected) {
+        c.strokeStyle = rel.color;
+        c.lineWidth = 1;
+        c.stroke();
+      }
+
+      // Draw label text
+      c.fillStyle = rel.label ? '#ffffff' : 'rgba(255, 255, 255, 0.5)';
       c.textAlign = 'center';
-      c.fillText(rel.label, midX, midY - 5);
+      c.textBaseline = 'middle';
+      c.fillText(labelText, labelX, labelY - 2);
     }
 
     c.setLineDash([]);
+
+    // Draw control point handles when selected
+    if (isSelected) {
+      // Draw lines from endpoints to control points
+      c.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+      c.lineWidth = 1;
+      c.setLineDash([4, 4]);
+
+      // Line from start to cp1
+      c.beginPath();
+      c.moveTo(startX, startY);
+      c.lineTo(cp1.x, cp1.y);
+      c.stroke();
+
+      // Line from end to cp2
+      c.beginPath();
+      c.moveTo(endX, endY);
+      c.lineTo(cp2.x, cp2.y);
+      c.stroke();
+
+      c.setLineDash([]);
+
+      // Draw control point 1 handle
+      c.fillStyle = '#3b82f6';
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(cp1.x, cp1.y, controlPointRadius, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+
+      // Draw control point 2 handle
+      c.beginPath();
+      c.arc(cp2.x, cp2.y, controlPointRadius, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+    }
   });
 }
 
@@ -465,46 +645,273 @@ function roundRect(
   c.stroke();
 }
 
-function drawNodes(c: CanvasRenderingContext2D, rendered: RenderedNode) {
-  drawNode(c, rendered);
-  rendered.children.forEach(child => drawNodes(c, child));
+// Shape drawing functions
+type NodeShapeType = 'rectangle' | 'rounded' | 'ellipse' | 'diamond' | 'parallelogram' | 'cloud' | 'capsule' | 'hexagon' | 'underline' | 'none';
+
+function drawShape(
+  c: CanvasRenderingContext2D,
+  shape: NodeShapeType,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fillOnly: boolean = false
+) {
+  c.beginPath();
+
+  switch (shape) {
+    case 'rectangle':
+      c.rect(x, y, w, h);
+      break;
+
+    case 'rounded':
+      const r = Math.min(h / 3, 10);
+      c.moveTo(x + r, y);
+      c.arcTo(x + w, y, x + w, y + h, r);
+      c.arcTo(x + w, y + h, x, y + h, r);
+      c.arcTo(x, y + h, x, y, r);
+      c.arcTo(x, y, x + w, y, r);
+      break;
+
+    case 'ellipse':
+      c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      break;
+
+    case 'diamond':
+      c.moveTo(x + w / 2, y);
+      c.lineTo(x + w, y + h / 2);
+      c.lineTo(x + w / 2, y + h);
+      c.lineTo(x, y + h / 2);
+      break;
+
+    case 'parallelogram':
+      const skew = w * 0.15;
+      c.moveTo(x + skew, y);
+      c.lineTo(x + w, y);
+      c.lineTo(x + w - skew, y + h);
+      c.lineTo(x, y + h);
+      break;
+
+    case 'cloud':
+      // Draw cloud shape using bezier curves
+      const rw = w / 2;
+      const rh = h / 2;
+      c.moveTo(x + rw * 0.5, y + rh);
+      c.bezierCurveTo(x - rw * 0.1, y + rh * 0.3, x + rw * 0.2, y - rh * 0.3, x + rw, y + rh * 0.2);
+      c.bezierCurveTo(x + rw * 1.3, y - rh * 0.2, x + w + rw * 0.1, y + rh * 0.5, x + w - rw * 0.2, y + rh);
+      c.bezierCurveTo(x + w + rw * 0.1, y + h - rh * 0.2, x + w - rw * 0.3, y + h + rh * 0.1, x + rw, y + h - rh * 0.1);
+      c.bezierCurveTo(x + rw * 0.5, y + h + rh * 0.2, x - rw * 0.1, y + h - rh * 0.3, x + rw * 0.5, y + rh);
+      break;
+
+    case 'capsule':
+      const capsuleR = h / 2;
+      c.moveTo(x + capsuleR, y);
+      c.lineTo(x + w - capsuleR, y);
+      c.arc(x + w - capsuleR, y + capsuleR, capsuleR, -Math.PI / 2, Math.PI / 2);
+      c.lineTo(x + capsuleR, y + h);
+      c.arc(x + capsuleR, y + capsuleR, capsuleR, Math.PI / 2, -Math.PI / 2);
+      break;
+
+    case 'hexagon':
+      const hexInset = w * 0.15;
+      c.moveTo(x + hexInset, y);
+      c.lineTo(x + w - hexInset, y);
+      c.lineTo(x + w, y + h / 2);
+      c.lineTo(x + w - hexInset, y + h);
+      c.lineTo(x + hexInset, y + h);
+      c.lineTo(x, y + h / 2);
+      break;
+
+    case 'underline':
+      // Just draw an underline, no shape fill
+      if (!fillOnly) {
+        c.moveTo(x, y + h);
+        c.lineTo(x + w, y + h);
+        c.stroke();
+      }
+      return; // Don't fill or close path
+
+    case 'none':
+      return; // Don't draw anything
+
+    default:
+      // Default to rounded rect
+      const defaultR = Math.min(h / 3, 6);
+      c.moveTo(x + defaultR, y);
+      c.arcTo(x + w, y, x + w, y + h, defaultR);
+      c.arcTo(x + w, y + h, x, y + h, defaultR);
+      c.arcTo(x, y + h, x, y, defaultR);
+      c.arcTo(x, y, x + w, y, defaultR);
+  }
+
+  c.closePath();
+  c.fill();
+  if (!fillOnly) {
+    c.stroke();
+  }
 }
 
-function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode) {
+// Get all node IDs in the selected branch (for focus mode)
+function getSelectedBranchIds(): Set<string> {
+  const ids = new Set<string>();
+  const selectedIds = store.canvasState.selectedNodeIds;
+
+  if (selectedIds.length === 0) return ids;
+
+  // For each selected node, add it and all its ancestors and descendants
+  selectedIds.forEach(selectedId => {
+    // Add the selected node
+    ids.add(selectedId);
+
+    // Add all ancestors
+    let currentId = selectedId;
+    while (currentId) {
+      const parent = store.findParentNode(currentId);
+      if (parent) {
+        ids.add(parent.id);
+        currentId = parent.id;
+      } else {
+        break;
+      }
+    }
+
+    // Add all descendants
+    const addDescendants = (node: typeof store.root) => {
+      ids.add(node.id);
+      node.children.forEach(addDescendants);
+    };
+
+    const selectedNode = store.findNodeById(selectedId);
+    if (selectedNode) {
+      addDescendants(selectedNode);
+    }
+  });
+
+  return ids;
+}
+
+// Get all node IDs that have ANY of the filtered tags (and their ancestors/descendants)
+function getTagFilteredNodeIds(): Set<string> {
+  const ids = new Set<string>();
+  const tagFilters = props.tagFilters || [];
+
+  if (tagFilters.length === 0) return ids;
+
+  // Helper to check if a node has any of the filtered tags
+  function hasMatchingTag(node: typeof store.root): boolean {
+    return node.labels.some(label => tagFilters.includes(label.text));
+  }
+
+  // Helper to collect node and all its descendants
+  function collectDescendants(node: typeof store.root) {
+    ids.add(node.id);
+    node.children.forEach(collectDescendants);
+  }
+
+  // Helper to collect ancestors
+  function collectAncestors(nodeId: string, current: typeof store.root, path: string[] = []): boolean {
+    if (current.id === nodeId) {
+      path.forEach(id => ids.add(id));
+      return true;
+    }
+    for (const child of current.children) {
+      if (collectAncestors(nodeId, child, [...path, current.id])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Find all nodes with matching tags
+  function findMatchingNodes(node: typeof store.root) {
+    if (hasMatchingTag(node)) {
+      ids.add(node.id);
+      // Add ancestors
+      collectAncestors(node.id, store.root);
+      // Add descendants
+      node.children.forEach(collectDescendants);
+    }
+    node.children.forEach(findMatchingNodes);
+  }
+
+  findMatchingNodes(store.root);
+  store.floatingTopics.forEach(topic => {
+    if (hasMatchingTag(topic)) {
+      ids.add(topic.id);
+      topic.children.forEach(collectDescendants);
+    }
+  });
+
+  return ids;
+}
+
+function drawNodes(c: CanvasRenderingContext2D, rendered: RenderedNode) {
+  const focusBranchIds = props.focusMode ? getSelectedBranchIds() : null;
+  const tagFilteredIds = (props.tagFilters && props.tagFilters.length > 0) ? getTagFilteredNodeIds() : null;
+  drawNodesRecursive(c, rendered, focusBranchIds, tagFilteredIds);
+}
+
+function drawNodesRecursive(c: CanvasRenderingContext2D, rendered: RenderedNode, focusBranchIds: Set<string> | null, tagFilteredIds: Set<string> | null) {
+  drawNode(c, rendered, focusBranchIds, tagFilteredIds);
+  rendered.children.forEach(child => drawNodesRecursive(c, child, focusBranchIds, tagFilteredIds));
+}
+
+function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode, focusBranchIds: Set<string> | null = null, tagFilteredIds: Set<string> | null = null) {
   const { node, x, y, width, height, level } = rendered;
   const isSelected = store.canvasState.selectedNodeIds.includes(node.id);
   const isHovered = store.canvasState.hoveredNodeId === node.id;
 
-  // Background
-  const bgColor = level === 0
+  // Focus mode: check if this node is in the focused branch
+  const isInFocusBranch = !focusBranchIds || focusBranchIds.size === 0 || focusBranchIds.has(node.id);
+
+  // Tag filter: check if this node matches the active tag filter
+  const passesTagFilter = !tagFilteredIds || tagFilteredIds.size === 0 || tagFilteredIds.has(node.id);
+
+  // Combine both filters - lower opacity if failing either filter
+  const focusOpacity = (isInFocusBranch && passesTagFilter) ? 1 : 0.2;
+
+  // Apply combined opacity to the entire node rendering
+  c.globalAlpha = focusOpacity;
+
+  // Get node shape from style, default to 'rounded'
+  const nodeShape: NodeShapeType = (node.style?.shape as NodeShapeType) || 'rounded';
+
+  // Background color
+  const bgColor = node.style?.backgroundColor || (level === 0
     ? colors.value.rootNode
-    : (colors.value.branches[level % colors.value.branches.length] || '#3b82f6');
+    : (colors.value.branches[level % colors.value.branches.length] || '#3b82f6'));
 
   c.fillStyle = bgColor;
+  c.strokeStyle = 'transparent';
+  c.lineWidth = 1;
 
-  // Shadow
-  c.shadowColor = 'rgba(0, 0, 0, 0.1)';
-  c.shadowBlur = 10;
-  c.shadowOffsetX = 2;
-  c.shadowOffsetY = 2;
+  // Shadow (not for underline/none shapes)
+  if (nodeShape !== 'underline' && nodeShape !== 'none') {
+    c.shadowColor = 'rgba(0, 0, 0, 0.1)';
+    c.shadowBlur = 10;
+    c.shadowOffsetX = 2;
+    c.shadowOffsetY = 2;
+  }
 
   // Draw shape
-  roundRect(c, x, y, width, height, level === 0 ? 10 : 6);
+  drawShape(c, nodeShape, x, y, width, height);
 
   c.shadowColor = 'transparent';
 
   // Selection highlight
   if (isSelected) {
+    c.fillStyle = 'transparent';
     c.strokeStyle = '#3b82f6';
     c.lineWidth = 3;
-    roundRect(c, x - 3, y - 3, width + 6, height + 6, level === 0 ? 12 : 8);
+    drawShape(c, nodeShape, x - 3, y - 3, width + 6, height + 6);
   }
 
   // Hover highlight
   if (isHovered && !isSelected) {
+    c.fillStyle = 'transparent';
     c.strokeStyle = '#93c5fd';
     c.lineWidth = 2;
-    roundRect(c, x - 2, y - 2, width + 4, height + 4, level === 0 ? 11 : 7);
+    drawShape(c, nodeShape, x - 2, y - 2, width + 4, height + 4);
   }
 
   // Calculate markers width first (markers go inside the node, left of text)
@@ -651,9 +1058,10 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode) {
     }
   }
 
-  // Reset text alignment
+  // Reset text alignment and global alpha
   c.textAlign = 'left';
   c.textBaseline = 'alphabetic';
+  c.globalAlpha = 1;
 }
 
 // Helper function to get marker display info
@@ -683,13 +1091,56 @@ function getMarkerDisplay(markerId: string, defaultColor?: string): {
     return { type: 'badge', label: monthMatch[1], bg: '#e5e7eb', textColor: '#374151' };
   }
 
-  // Face emojis
+  // Face emojis (expanded)
   const faceEmojis: Record<string, string> = {
     'face-happy': '😊', 'face-sad': '😢', 'face-angry': '😠', 'face-surprised': '😮',
-    'face-laugh': '😄', 'face-love': '😍', 'face-think': '🤔', 'face-cool': '😎'
+    'face-laugh': '😄', 'face-love': '😍', 'face-think': '🤔', 'face-cool': '😎',
+    'face-wink': '😉', 'face-cry': '😭', 'face-sweat': '😅', 'face-sleeping': '😴',
+    'face-sick': '🤢', 'face-mind-blown': '🤯', 'face-party': '🥳', 'face-nerd': '🤓'
   };
   if (faceEmojis[markerId]) {
     return { type: 'emoji', emoji: faceEmojis[markerId] };
+  }
+
+  // Gesture emojis
+  const gestureEmojis: Record<string, string> = {
+    'gest-thumbsup': '👍', 'gest-thumbsdown': '👎', 'gest-clap': '👏', 'gest-wave': '👋',
+    'gest-ok': '👌', 'gest-point': '👉', 'gest-fist': '✊', 'gest-raised': '✋',
+    'gest-muscle': '💪', 'gest-pray': '🙏', 'gest-writing': '✍️', 'gest-eyes': '👀'
+  };
+  if (gestureEmojis[markerId]) {
+    return { type: 'emoji', emoji: gestureEmojis[markerId] };
+  }
+
+  // Object emojis
+  const objectEmojis: Record<string, string> = {
+    'obj-lightbulb': '💡', 'obj-fire': '🔥', 'obj-star': '⭐', 'obj-heart': '❤️',
+    'obj-rocket': '🚀', 'obj-target': '🎯', 'obj-trophy': '🏆', 'obj-medal': '🥇',
+    'obj-gem': '💎', 'obj-bolt': '⚡', 'obj-magnet': '🧲', 'obj-gear': '⚙️',
+    'obj-wrench': '🔧', 'obj-key': '🔑', 'obj-lock': '🔒', 'obj-bell': '🔔'
+  };
+  if (objectEmojis[markerId]) {
+    return { type: 'emoji', emoji: objectEmojis[markerId] };
+  }
+
+  // Nature emojis
+  const natureEmojis: Record<string, string> = {
+    'nat-sun': '☀️', 'nat-moon': '🌙', 'nat-cloud': '☁️', 'nat-rain': '🌧️',
+    'nat-snow': '❄️', 'nat-rainbow': '🌈', 'nat-tree': '🌳', 'nat-flower': '🌸',
+    'nat-leaf': '🍃', 'nat-seedling': '🌱', 'nat-earth': '🌍', 'nat-mountain': '⛰️'
+  };
+  if (natureEmojis[markerId]) {
+    return { type: 'emoji', emoji: natureEmojis[markerId] };
+  }
+
+  // Tech emojis
+  const techEmojis: Record<string, string> = {
+    'tech-laptop': '💻', 'tech-phone': '📱', 'tech-email': '📧', 'tech-folder': '📁',
+    'tech-chart': '📊', 'tech-calendar': '📅', 'tech-clipboard': '📋', 'tech-pencil': '✏️',
+    'tech-book': '📚', 'tech-money': '💰', 'tech-briefcase': '💼', 'tech-clock': '⏰'
+  };
+  if (techEmojis[markerId]) {
+    return { type: 'emoji', emoji: techEmojis[markerId] };
   }
 
   // Progress markers
@@ -823,7 +1274,35 @@ function handleMouseDown(e: MouseEvent) {
 
   if (e.button === 0) {
     // Left click
+
+    // First, check if clicking on a control point handle (highest priority)
+    const controlPoint = findControlPointAtPosition(pos);
+    if (controlPoint) {
+      draggingControlPoint.value = controlPoint;
+      render();
+      return;
+    }
+
+    // Check if clicking on a relationship label (to drag it)
+    const clickedLabelRelId = findRelationshipLabelAtPosition(pos);
+    if (clickedLabelRelId && selectedRelationshipId.value === clickedLabelRelId) {
+      draggingRelationshipLabel.value = { relId: clickedLabelRelId, startPos: pos };
+      render();
+      return;
+    }
+
+    // Check if clicking on a relationship line
+    const clickedRelId = findRelationshipAtPosition(pos);
+    if (clickedRelId && !clickedNode) {
+      store.selectRelationship(clickedRelId);
+      render();
+      return;
+    }
+
     if (clickedNode) {
+      // Deselect relationship when clicking a node
+      store.selectRelationship(null);
+
       if (e.shiftKey) {
         store.selectNode(clickedNode.node.id, true);
       } else {
@@ -852,7 +1331,7 @@ function handleMouseDown(e: MouseEvent) {
         y: pos.y - clickedNode.y,
       };
     } else {
-      // Click on empty space
+      // Click on empty space - clearSelection also clears selectedRelationshipId
       store.clearSelection();
 
       // Start selection box
@@ -871,6 +1350,23 @@ function handleMouseMove(e: MouseEvent) {
     const dy = pos.y - lastMousePos.value.y;
     store.setPan(store.viewState.panX + dx, store.viewState.panY + dy);
     render();
+  } else if (draggingControlPoint.value) {
+    // Dragging a relationship control point
+    const { relId, point } = draggingControlPoint.value;
+    const updateKey = point === 1 ? 'controlPoint1' : 'controlPoint2';
+    store.updateRelationship(relId, { [updateKey]: { x: pos.x, y: pos.y } }, false);
+    render();
+  } else if (draggingRelationshipLabel.value) {
+    // Dragging a relationship label
+    const { relId } = draggingRelationshipLabel.value;
+    const labelPos = relationshipLabelPositions.get(relId);
+    if (labelPos) {
+      // Calculate new offset from base position
+      const newOffsetX = pos.x - labelPos.baseX;
+      const newOffsetY = pos.y - labelPos.baseY;
+      store.updateRelationship(relId, { labelOffset: { x: newOffsetX, y: newOffsetY } }, false);
+      render();
+    }
   } else if (isDragging.value && draggedNode.value) {
     // Move the dragged node visually
     draggedNode.value.x = pos.x - dragOffset.value.x;
@@ -880,8 +1376,27 @@ function handleMouseMove(e: MouseEvent) {
     store.canvasState.selectionBox.end = pos;
     render();
   } else {
-    // Hover detection
+    // Hover detection - update cursor based on what's under mouse
+    const controlPoint = findControlPointAtPosition(pos);
+    const hoveredLabel = findRelationshipLabelAtPosition(pos);
     const hoveredNode = findNodeAtPosition(pos);
+    const hoveredRel = !hoveredNode ? findRelationshipAtPosition(pos) : null;
+
+    // Update cursor
+    if (canvasRef.value) {
+      if (controlPoint) {
+        canvasRef.value.style.cursor = 'grab';
+      } else if (hoveredLabel && selectedRelationshipId.value === hoveredLabel) {
+        canvasRef.value.style.cursor = 'move';
+      } else if (hoveredRel) {
+        canvasRef.value.style.cursor = 'pointer';
+      } else if (hoveredNode) {
+        canvasRef.value.style.cursor = 'move';
+      } else {
+        canvasRef.value.style.cursor = 'default';
+      }
+    }
+
     const newHoveredId = hoveredNode?.node.id || null;
     if (newHoveredId !== store.canvasState.hoveredNodeId) {
       store.canvasState.hoveredNodeId = newHoveredId;
@@ -918,6 +1433,32 @@ function handleMouseUp(e: MouseEvent) {
     store.canvasState.selectionBox = null;
   }
 
+  // Handle control point drag end - save to history
+  if (draggingControlPoint.value) {
+    const { relId, point } = draggingControlPoint.value;
+    const rel = store.relationships.find(r => r.id === relId);
+    if (rel) {
+      // Save the final position to history
+      const updateKey = point === 1 ? 'controlPoint1' : 'controlPoint2';
+      const controlPoint = point === 1 ? rel.controlPoint1 : rel.controlPoint2;
+      if (controlPoint) {
+        store.updateRelationship(relId, { [updateKey]: controlPoint }, true);
+      }
+    }
+    draggingControlPoint.value = null;
+  }
+
+  // Handle relationship label drag end - save to history
+  if (draggingRelationshipLabel.value) {
+    const { relId } = draggingRelationshipLabel.value;
+    const rel = store.relationships.find(r => r.id === relId);
+    if (rel && rel.labelOffset) {
+      // Save the final offset to history
+      store.updateRelationship(relId, { labelOffset: rel.labelOffset }, true);
+    }
+    draggingRelationshipLabel.value = null;
+  }
+
   // Handle node drop
   if (isDragging.value && draggedNode.value) {
     const dropTarget = findNodeAtPosition(pos);
@@ -947,6 +1488,21 @@ function handleMouseUp(e: MouseEvent) {
 function handleDoubleClick(e: MouseEvent) {
   const pos = getMousePosition(e);
   const clickedNode = findNodeAtPosition(pos);
+
+  // Check if double-clicking on a relationship label first
+  const clickedLabelRelId = findRelationshipLabelAtPosition(pos);
+  if (clickedLabelRelId) {
+    startEditingRelationshipLabel(clickedLabelRelId);
+    return;
+  }
+
+  // Check if double-clicking on a relationship line (to add label)
+  const clickedRelId = findRelationshipAtPosition(pos);
+  if (clickedRelId && !clickedNode) {
+    store.selectRelationship(clickedRelId);
+    startEditingRelationshipLabel(clickedRelId);
+    return;
+  }
 
   if (clickedNode) {
     // Show inline text editor
@@ -979,6 +1535,46 @@ function handleDoubleClick(e: MouseEvent) {
     updateLayout();
     render();
   }
+}
+
+function startEditingRelationshipLabel(relId: string) {
+  const rel = store.relationships.find(r => r.id === relId);
+  if (!rel) return;
+
+  const labelPos = relationshipLabelPositions.get(relId);
+  if (!labelPos) return;
+
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const cssWidth = canvasWidth.value;
+  const cssHeight = canvasHeight.value;
+
+  // Convert world coordinates to screen coordinates
+  const screenX = (labelPos.x - cssWidth / 2 + store.viewState.panX) * store.viewState.zoom + cssWidth / 2 + rect.left;
+  const screenY = (labelPos.y - cssHeight / 2 + store.viewState.panY) * store.viewState.zoom + cssHeight / 2 + rect.top;
+
+  editingRelationshipLabel.value = {
+    relId,
+    x: screenX,
+    y: screenY,
+    text: rel.label || '',
+  };
+
+  nextTick(() => {
+    relationshipLabelInputRef.value?.focus();
+    relationshipLabelInputRef.value?.select();
+  });
+}
+
+function finishEditingRelationshipLabel() {
+  if (!editingRelationshipLabel.value) return;
+
+  const { relId, text } = editingRelationshipLabel.value;
+  store.updateRelationship(relId, { label: text.trim() || undefined });
+  editingRelationshipLabel.value = null;
+  render();
 }
 
 function handleContextMenu(e: MouseEvent) {
@@ -1046,10 +1642,11 @@ function handleDrop(e: DragEvent) {
   }
 }
 
-// Expose canvas dimensions and render function for parent components
+// Expose canvas dimensions, canvas element and render function for parent components
 defineExpose({
   canvasWidth,
   canvasHeight,
+  canvasRef,
   render,
 });
 
@@ -1093,10 +1690,14 @@ function handleWheel(e: WheelEvent) {
   render();
 }
 
+// Clipboard for copy/paste
+const clipboard = ref<{ nodeId: string; mode: 'copy' | 'cut' } | null>(null);
+
 function handleKeyDown(e: KeyboardEvent) {
   if (store.canvasState.editingNodeId) return;
 
   const selectedId = store.canvasState.selectedNodeIds[0];
+  const selectedNode = selectedId ? store.findNodeById(selectedId) : null;
 
   switch (e.key) {
     case 'Tab':
@@ -1134,6 +1735,7 @@ function handleKeyDown(e: KeyboardEvent) {
 
     case 'z':
       if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
         if (e.shiftKey) {
           store.redo();
         } else {
@@ -1141,6 +1743,170 @@ function handleKeyDown(e: KeyboardEvent) {
         }
         updateLayout();
         render();
+      }
+      break;
+
+    case 'y':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        store.redo();
+        updateLayout();
+        render();
+      }
+      break;
+
+    case 'c':
+      if ((e.ctrlKey || e.metaKey) && selectedId) {
+        e.preventDefault();
+        clipboard.value = { nodeId: selectedId, mode: 'copy' };
+      }
+      break;
+
+    case 'x':
+      if ((e.ctrlKey || e.metaKey) && selectedId && selectedId !== store.root.id) {
+        e.preventDefault();
+        clipboard.value = { nodeId: selectedId, mode: 'cut' };
+      }
+      break;
+
+    case 'v':
+      if ((e.ctrlKey || e.metaKey) && clipboard.value && selectedId) {
+        e.preventDefault();
+        const sourceNode = store.findNodeById(clipboard.value.nodeId);
+        if (sourceNode) {
+          if (clipboard.value.mode === 'copy') {
+            // Deep copy the node as a child of selected
+            const newNode = store.addChild(selectedId, sourceNode.text);
+            if (newNode) {
+              store.selectNode(newNode.id);
+            }
+          } else if (clipboard.value.mode === 'cut' && clipboard.value.nodeId !== selectedId) {
+            // Move the node (reparent)
+            store.moveNode(clipboard.value.nodeId, selectedId);
+            clipboard.value = null;
+          }
+          updateLayout();
+          render();
+        }
+      }
+      break;
+
+    case 'a':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        // Select all children of current parent
+        if (selectedId && selectedNode) {
+          const parent = store.findParentNode(selectedId);
+          if (parent) {
+            parent.children.forEach(child => {
+              store.selectNode(child.id, true); // multi-select
+            });
+          }
+        }
+        render();
+      }
+      break;
+
+    case ' ':
+      // Space to toggle collapse
+      e.preventDefault();
+      if (selectedId && selectedNode && selectedNode.children.length > 0) {
+        store.toggleCollapse(selectedId);
+        updateLayout();
+        render();
+      }
+      break;
+
+    case 'ArrowUp':
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        // Move node up (swap with previous sibling)
+        if (selectedId && selectedId !== store.root.id) {
+          store.moveNodeUp(selectedId);
+          updateLayout();
+          render();
+        }
+      } else {
+        // Navigate to previous sibling or parent
+        if (selectedId && selectedNode) {
+          const parent = store.findParentNode(selectedId);
+          if (parent) {
+            const siblings = parent.children;
+            const currentIndex = siblings.findIndex(n => n.id === selectedId);
+            if (currentIndex > 0) {
+              const prevSibling = siblings[currentIndex - 1];
+              if (prevSibling) store.selectNode(prevSibling.id);
+            } else {
+              // Go to parent
+              store.selectNode(parent.id);
+            }
+            render();
+          }
+        }
+      }
+      break;
+
+    case 'ArrowDown':
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        // Move node down (swap with next sibling)
+        if (selectedId && selectedId !== store.root.id) {
+          store.moveNodeDown(selectedId);
+          updateLayout();
+          render();
+        }
+      } else {
+        // Navigate to next sibling
+        if (selectedId && selectedNode) {
+          const parent = store.findParentNode(selectedId);
+          if (parent) {
+            const siblings = parent.children;
+            const currentIndex = siblings.findIndex(n => n.id === selectedId);
+            if (currentIndex < siblings.length - 1) {
+              const nextSibling = siblings[currentIndex + 1];
+              if (nextSibling) store.selectNode(nextSibling.id);
+              render();
+            }
+          }
+        }
+      }
+      break;
+
+    case 'ArrowLeft':
+      e.preventDefault();
+      if (selectedId && selectedNode) {
+        if (selectedNode.children.length > 0 && !selectedNode.collapsed) {
+          // Collapse if has children and expanded
+          store.toggleCollapse(selectedId);
+          updateLayout();
+          render();
+        } else {
+          // Navigate to parent
+          const parent = store.findParentNode(selectedId);
+          if (parent) {
+            store.selectNode(parent.id);
+            render();
+          }
+        }
+      }
+      break;
+
+    case 'ArrowRight':
+      e.preventDefault();
+      if (selectedId && selectedNode) {
+        if (selectedNode.children.length > 0) {
+          if (selectedNode.collapsed) {
+            // Expand if collapsed
+            store.toggleCollapse(selectedId);
+            updateLayout();
+            render();
+          } else {
+            // Navigate to first child
+            const firstChild = selectedNode.children[0];
+            if (firstChild) store.selectNode(firstChild.id);
+            render();
+          }
+        }
       }
       break;
 
@@ -1178,6 +1944,8 @@ function handleKeyDown(e: KeyboardEvent) {
         cancelEditing();
       }
       contextMenu.value.show = false;
+      store.clearSelection();
+      render();
       break;
 
     case 'F2':
@@ -1249,6 +2017,121 @@ function findNodeAtPosition(pos: Position): RenderedNode | null {
     }
   }
 
+  return null;
+}
+
+// Find if a position is near a relationship line (for selection)
+function findRelationshipAtPosition(pos: Position): string | null {
+  for (const rel of store.relationships) {
+    const sourceNode = renderedRoot.value
+      ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
+      : null;
+    const targetNode = renderedRoot.value
+      ? findRenderedNodeById(renderedRoot.value, rel.targetId)
+      : null;
+
+    if (!sourceNode || !targetNode) continue;
+
+    const startX = sourceNode.x + sourceNode.width / 2;
+    const startY = sourceNode.y + sourceNode.height / 2;
+    const endX = targetNode.x + targetNode.width / 2;
+    const endY = targetNode.y + targetNode.height / 2;
+
+    const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
+
+    // Check if point is near the Bezier curve
+    if (isPointNearBezier(pos, { x: startX, y: startY }, cp1, cp2, { x: endX, y: endY }, 10)) {
+      return rel.id;
+    }
+  }
+  return null;
+}
+
+// Check if a point is near a cubic Bezier curve
+function isPointNearBezier(
+  point: Position,
+  p0: Position,
+  p1: Position,
+  p2: Position,
+  p3: Position,
+  threshold: number
+): boolean {
+  // Sample the curve and check distance to each segment
+  const samples = 20;
+  for (let i = 0; i < samples; i++) {
+    const t = i / samples;
+    const x = Math.pow(1-t, 3) * p0.x + 3 * Math.pow(1-t, 2) * t * p1.x + 3 * (1-t) * Math.pow(t, 2) * p2.x + Math.pow(t, 3) * p3.x;
+    const y = Math.pow(1-t, 3) * p0.y + 3 * Math.pow(1-t, 2) * t * p1.y + 3 * (1-t) * Math.pow(t, 2) * p2.y + Math.pow(t, 3) * p3.y;
+
+    const dist = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
+    if (dist < threshold) return true;
+  }
+  return false;
+}
+
+// Find if a position is on a control point handle
+function findControlPointAtPosition(pos: Position): { relId: string; point: 1 | 2 } | null {
+  // Only check the selected relationship
+  if (!selectedRelationshipId.value) return null;
+
+  const rel = store.relationships.find(r => r.id === selectedRelationshipId.value);
+  if (!rel) return null;
+
+  const sourceNode = renderedRoot.value
+    ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
+    : null;
+  const targetNode = renderedRoot.value
+    ? findRenderedNodeById(renderedRoot.value, rel.targetId)
+    : null;
+
+  if (!sourceNode || !targetNode) return null;
+
+  const startX = sourceNode.x + sourceNode.width / 2;
+  const startY = sourceNode.y + sourceNode.height / 2;
+  const endX = targetNode.x + targetNode.width / 2;
+  const endY = targetNode.y + targetNode.height / 2;
+
+  const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
+
+  // Check control point 1
+  const dist1 = Math.sqrt(Math.pow(pos.x - cp1.x, 2) + Math.pow(pos.y - cp1.y, 2));
+  if (dist1 <= controlPointRadius + 4) {
+    return { relId: rel.id, point: 1 };
+  }
+
+  // Check control point 2
+  const dist2 = Math.sqrt(Math.pow(pos.x - cp2.x, 2) + Math.pow(pos.y - cp2.y, 2));
+  if (dist2 <= controlPointRadius + 4) {
+    return { relId: rel.id, point: 2 };
+  }
+
+  return null;
+}
+
+// Find if a position is on a relationship label
+function findRelationshipLabelAtPosition(pos: Position): string | null {
+  for (const [relId, labelPos] of relationshipLabelPositions) {
+    const rel = store.relationships.find(r => r.id === relId);
+    if (!rel) continue;
+
+    // Get label dimensions
+    const labelText = rel.label || (selectedRelationshipId.value === relId ? 'Double-click to add label' : '');
+    if (!labelText) continue;
+
+    const padding = 6;
+    const estimatedWidth = labelText.length * 7 + padding * 2; // Rough estimate
+    const labelHeight = 20;
+
+    // Check if click is within label bounds
+    if (
+      pos.x >= labelPos.x - estimatedWidth / 2 &&
+      pos.x <= labelPos.x + estimatedWidth / 2 &&
+      pos.y >= labelPos.y - labelHeight / 2 - 2 &&
+      pos.y <= labelPos.y + labelHeight / 2 - 2
+    ) {
+      return relId;
+    }
+  }
   return null;
 }
 
@@ -1387,6 +2270,23 @@ watch(
     render();
   }
 );
+
+// Watch focus mode changes
+watch(
+  () => props.focusMode,
+  () => {
+    render();
+  }
+);
+
+// Watch tag filter changes
+watch(
+  () => props.tagFilters,
+  () => {
+    render();
+  },
+  { deep: true }
+);
 </script>
 
 <template>
@@ -1425,6 +2325,25 @@ watch(
       }"
       @keydown="handleEditKeydown"
       @blur="finishEditing"
+    />
+
+    <!-- Relationship Label Editor -->
+    <input
+      v-if="editingRelationshipLabel"
+      ref="relationshipLabelInputRef"
+      v-model="editingRelationshipLabel.text"
+      type="text"
+      placeholder="Enter label"
+      class="fixed z-50 px-3 py-1 text-sm bg-slate-800 text-white border-2 border-blue-500 rounded outline-none shadow-lg text-center"
+      :style="{
+        left: `${editingRelationshipLabel.x}px`,
+        top: `${editingRelationshipLabel.y}px`,
+        transform: 'translate(-50%, -50%)',
+        minWidth: '120px',
+      }"
+      @keydown.enter.prevent="finishEditingRelationshipLabel"
+      @keydown.escape.prevent="editingRelationshipLabel = null"
+      @blur="finishEditingRelationshipLabel"
     />
 
     <!-- Context Menu -->

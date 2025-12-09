@@ -13,7 +13,15 @@ import {
   downloadFile,
   openFilePicker,
   readFileAsText,
+  exportToPNG,
+  exportToSVG,
+  exportToPDF,
+  exportToMarkdown,
 } from '../utils/fileUtils';
+
+const props = defineProps<{
+  canvasRef?: HTMLCanvasElement | null;
+}>();
 
 const emit = defineEmits<{
   'toggle-sidebar': [];
@@ -106,12 +114,10 @@ function handleToggleSidebar() {
 
 // Save functions
 async function saveAsJSON() {
-  console.log('saveAsJSON called');
   showSaveMenu.value = false;
   const mapData = store.getMapData();
   const json = exportToJSON(mapData);
   const filename = `${mapData.name.replace(/[^a-z0-9]/gi, '_')}.json`;
-  console.log('Downloading:', filename);
   downloadFile(json, filename, 'application/json');
 }
 
@@ -126,6 +132,52 @@ async function saveAsXMind() {
     console.error('Error exporting XMind:', error);
     alert('Failed to export XMind file: ' + (error as Error).message);
   }
+}
+
+function saveAsPNG() {
+  showSaveMenu.value = false;
+  if (!props.canvasRef) {
+    alert('Canvas not available for export');
+    return;
+  }
+  const mapData = store.getMapData();
+  const filename = `${mapData.name.replace(/[^a-z0-9]/gi, '_')}.png`;
+  exportToPNG(props.canvasRef, filename);
+}
+
+function saveAsSVG() {
+  showSaveMenu.value = false;
+  if (!props.canvasRef) {
+    alert('Canvas not available for export');
+    return;
+  }
+  const mapData = store.getMapData();
+  const filename = `${mapData.name.replace(/[^a-z0-9]/gi, '_')}.svg`;
+  exportToSVG(props.canvasRef, filename);
+}
+
+async function saveAsPDF() {
+  showSaveMenu.value = false;
+  if (!props.canvasRef) {
+    alert('Canvas not available for export');
+    return;
+  }
+  try {
+    const mapData = store.getMapData();
+    const filename = `${mapData.name.replace(/[^a-z0-9]/gi, '_')}.pdf`;
+    await exportToPDF(props.canvasRef, filename);
+  } catch (error) {
+    console.error('Error exporting PDF:', error);
+    alert('Failed to export PDF: ' + (error as Error).message);
+  }
+}
+
+function saveAsMarkdown() {
+  showSaveMenu.value = false;
+  const mapData = store.getMapData();
+  const markdown = exportToMarkdown(mapData);
+  const filename = `${mapData.name.replace(/[^a-z0-9]/gi, '_')}.md`;
+  downloadFile(markdown, filename, 'text/markdown');
 }
 
 // Open functions
@@ -233,6 +285,7 @@ async function openXMind() {
         :style="{ top: saveMenuPosition.top + 'px', left: saveMenuPosition.left + 'px' }"
         @click.stop
       >
+        <div class="dropdown-section">Document</div>
         <button class="dropdown-item" @click="saveAsJSON">
           <span class="dropdown-icon">{ }</span>
           <span>Save as JSON (.json)</span>
@@ -240,6 +293,26 @@ async function openXMind() {
         <button class="dropdown-item" @click="saveAsXMind">
           <span class="dropdown-icon">X</span>
           <span>Save as XMind (.xmind)</span>
+        </button>
+        <div class="dropdown-divider" />
+        <div class="dropdown-section">Export Image</div>
+        <button class="dropdown-item" @click="saveAsPNG">
+          <span class="dropdown-icon img">PNG</span>
+          <span>Export as PNG</span>
+        </button>
+        <button class="dropdown-item" @click="saveAsSVG">
+          <span class="dropdown-icon img">SVG</span>
+          <span>Export as SVG</span>
+        </button>
+        <button class="dropdown-item" @click="saveAsPDF">
+          <span class="dropdown-icon img">PDF</span>
+          <span>Export as PDF</span>
+        </button>
+        <div class="dropdown-divider" />
+        <div class="dropdown-section">Export Text</div>
+        <button class="dropdown-item" @click="saveAsMarkdown">
+          <span class="dropdown-icon">MD</span>
+          <span>Export as Markdown</span>
         </button>
       </div>
     </Teleport>
@@ -467,5 +540,26 @@ async function openXMind() {
   color: #60a5fa;
   background: rgba(59, 130, 246, 0.2);
   border-radius: 4px;
+}
+
+.dropdown-menu-fixed .dropdown-icon.img {
+  font-size: 8px;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.2);
+}
+
+.dropdown-menu-fixed .dropdown-section {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 12px 4px;
+}
+
+.dropdown-menu-fixed .dropdown-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 8px;
 }
 </style>

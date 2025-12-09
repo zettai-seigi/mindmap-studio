@@ -2,6 +2,8 @@
 import { computed, ref } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
 import { ChevronDown, ChevronRight } from 'lucide-vue-next';
+import TagsPanel from './TagsPanel.vue';
+import RelationshipsPanel from './RelationshipsPanel.vue';
 
 const store = useMindMapStore();
 
@@ -11,7 +13,16 @@ const selectedNode = computed(() => {
 });
 
 // Active tab
-const activeTab = ref<'outline' | 'markers' | 'style' | 'clipart' | 'notes' | 'comments' | 'tasks'>('style');
+const activeTab = ref<'outline' | 'markers' | 'style' | 'clipart' | 'notes' | 'comments' | 'tasks' | 'tags' | 'relationships'>('style');
+
+// Define emit for filter changes
+const emit = defineEmits<{
+  filterChange: [tags: string[]];
+}>();
+
+function handleTagFilterChange(tags: string[]) {
+  emit('filterChange', tags);
+}
 
 // Sheet format from store
 const sheetFormat = computed(() => store.sheetFormat);
@@ -99,7 +110,7 @@ const markerCategories = [
   },
   {
     id: 'faces',
-    label: 'Faces',
+    label: 'Faces & Emotions',
     markers: [
       { id: 'face-happy', emoji: '😊' },
       { id: 'face-sad', emoji: '😢' },
@@ -109,6 +120,90 @@ const markerCategories = [
       { id: 'face-love', emoji: '😍' },
       { id: 'face-think', emoji: '🤔' },
       { id: 'face-cool', emoji: '😎' },
+      { id: 'face-wink', emoji: '😉' },
+      { id: 'face-cry', emoji: '😭' },
+      { id: 'face-sweat', emoji: '😅' },
+      { id: 'face-sleeping', emoji: '😴' },
+      { id: 'face-sick', emoji: '🤢' },
+      { id: 'face-mind-blown', emoji: '🤯' },
+      { id: 'face-party', emoji: '🥳' },
+      { id: 'face-nerd', emoji: '🤓' },
+    ],
+  },
+  {
+    id: 'gestures',
+    label: 'Gestures',
+    markers: [
+      { id: 'gest-thumbsup', emoji: '👍' },
+      { id: 'gest-thumbsdown', emoji: '👎' },
+      { id: 'gest-clap', emoji: '👏' },
+      { id: 'gest-wave', emoji: '👋' },
+      { id: 'gest-ok', emoji: '👌' },
+      { id: 'gest-point', emoji: '👉' },
+      { id: 'gest-fist', emoji: '✊' },
+      { id: 'gest-raised', emoji: '✋' },
+      { id: 'gest-muscle', emoji: '💪' },
+      { id: 'gest-pray', emoji: '🙏' },
+      { id: 'gest-writing', emoji: '✍️' },
+      { id: 'gest-eyes', emoji: '👀' },
+    ],
+  },
+  {
+    id: 'objects',
+    label: 'Objects & Tools',
+    markers: [
+      { id: 'obj-lightbulb', emoji: '💡' },
+      { id: 'obj-fire', emoji: '🔥' },
+      { id: 'obj-star', emoji: '⭐' },
+      { id: 'obj-heart', emoji: '❤️' },
+      { id: 'obj-rocket', emoji: '🚀' },
+      { id: 'obj-target', emoji: '🎯' },
+      { id: 'obj-trophy', emoji: '🏆' },
+      { id: 'obj-medal', emoji: '🥇' },
+      { id: 'obj-gem', emoji: '💎' },
+      { id: 'obj-bolt', emoji: '⚡' },
+      { id: 'obj-magnet', emoji: '🧲' },
+      { id: 'obj-gear', emoji: '⚙️' },
+      { id: 'obj-wrench', emoji: '🔧' },
+      { id: 'obj-key', emoji: '🔑' },
+      { id: 'obj-lock', emoji: '🔒' },
+      { id: 'obj-bell', emoji: '🔔' },
+    ],
+  },
+  {
+    id: 'nature',
+    label: 'Nature & Weather',
+    markers: [
+      { id: 'nat-sun', emoji: '☀️' },
+      { id: 'nat-moon', emoji: '🌙' },
+      { id: 'nat-cloud', emoji: '☁️' },
+      { id: 'nat-rain', emoji: '🌧️' },
+      { id: 'nat-snow', emoji: '❄️' },
+      { id: 'nat-rainbow', emoji: '🌈' },
+      { id: 'nat-tree', emoji: '🌳' },
+      { id: 'nat-flower', emoji: '🌸' },
+      { id: 'nat-leaf', emoji: '🍃' },
+      { id: 'nat-seedling', emoji: '🌱' },
+      { id: 'nat-earth', emoji: '🌍' },
+      { id: 'nat-mountain', emoji: '⛰️' },
+    ],
+  },
+  {
+    id: 'tech',
+    label: 'Tech & Work',
+    markers: [
+      { id: 'tech-laptop', emoji: '💻' },
+      { id: 'tech-phone', emoji: '📱' },
+      { id: 'tech-email', emoji: '📧' },
+      { id: 'tech-folder', emoji: '📁' },
+      { id: 'tech-chart', emoji: '📊' },
+      { id: 'tech-calendar', emoji: '📅' },
+      { id: 'tech-clipboard', emoji: '📋' },
+      { id: 'tech-pencil', emoji: '✏️' },
+      { id: 'tech-book', emoji: '📚' },
+      { id: 'tech-money', emoji: '💰' },
+      { id: 'tech-briefcase', emoji: '💼' },
+      { id: 'tech-clock', emoji: '⏰' },
     ],
   },
   {
@@ -211,7 +306,9 @@ const markerCategories = [
 const tabs = [
   { id: 'outline', icon: '📋', label: 'Outline' },
   { id: 'markers', icon: '🏷️', label: 'Markers' },
+  { id: 'tags', icon: '🔖', label: 'Tags' },
   { id: 'style', icon: '🎨', label: 'Sheet Format' },
+  { id: 'relationships', icon: '🔗', label: 'Relationships' },
   { id: 'clipart', icon: '🖼️', label: 'Clipart' },
   { id: 'notes', icon: '📝', label: 'Notes' },
   { id: 'comments', icon: '💬', label: 'Comments' },
@@ -506,6 +603,30 @@ function resetStyle() {
   store.resetSheetFormat();
 }
 
+// Node shape options
+const shapeOptions = [
+  { id: 'rounded', label: 'Rounded', icon: '▢' },
+  { id: 'rectangle', label: 'Rectangle', icon: '▬' },
+  { id: 'ellipse', label: 'Ellipse', icon: '⬭' },
+  { id: 'diamond', label: 'Diamond', icon: '◇' },
+  { id: 'capsule', label: 'Capsule', icon: '⬬' },
+  { id: 'hexagon', label: 'Hexagon', icon: '⬡' },
+  { id: 'parallelogram', label: 'Parallelogram', icon: '▱' },
+  { id: 'cloud', label: 'Cloud', icon: '☁' },
+  { id: 'underline', label: 'Underline', icon: '＿' },
+  { id: 'none', label: 'None', icon: '○' },
+];
+
+function updateNodeShape(shape: string) {
+  if (!selectedNode.value) return;
+  store.updateNodeStyle(selectedNode.value.id, { shape });
+}
+
+function updateNodeColor(color: string) {
+  if (!selectedNode.value) return;
+  store.updateNodeStyle(selectedNode.value.id, { backgroundColor: color });
+}
+
 // Get header title
 const headerTitle = computed(() => {
   return tabs.find(t => t.id === activeTab.value)?.label || 'Outline';
@@ -558,6 +679,54 @@ const headerTitle = computed(() => {
 
       <!-- Style/Sheet Format Content -->
       <div v-else-if="activeTab === 'style'" class="sidebar-content style-content">
+        <!-- Node Shape Section (only when node is selected) -->
+        <div v-if="selectedNode" class="format-section node-style-section">
+          <div class="format-section-title">Node Style</div>
+
+          <!-- Shape Selection -->
+          <div class="shape-label">Shape</div>
+          <div class="shape-grid">
+            <button
+              v-for="shape in shapeOptions"
+              :key="shape.id"
+              class="shape-option"
+              :class="{ active: selectedNode.style?.shape === shape.id || (!selectedNode.style?.shape && shape.id === 'rounded') }"
+              :title="shape.label"
+              @click="updateNodeShape(shape.id)"
+            >
+              <span class="shape-icon">{{ shape.icon }}</span>
+            </button>
+          </div>
+
+          <!-- Node Background Color -->
+          <div class="format-row" style="margin-top: 12px;">
+            <span class="format-label">Node Color:</span>
+            <div class="node-color-picker">
+              <button
+                v-for="color in ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b']"
+                :key="color"
+                class="node-color-option"
+                :class="{ active: selectedNode.style?.backgroundColor === color }"
+                :style="{ backgroundColor: color }"
+                @click="updateNodeColor(color)"
+              />
+              <div class="color-picker-wrapper custom-color">
+                <div
+                  class="node-color-option custom"
+                  :style="{ background: 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)' }"
+                  title="Custom color"
+                />
+                <input
+                  type="color"
+                  :value="selectedNode.style?.backgroundColor || '#3b82f6'"
+                  @input="updateNodeColor(($event.target as HTMLInputElement).value)"
+                  class="color-input"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Background Section -->
         <div class="format-section">
           <div class="format-section-title">Background</div>
@@ -690,6 +859,11 @@ const headerTitle = computed(() => {
         </div>
       </div>
 
+      <!-- Tags Content -->
+      <div v-else-if="activeTab === 'tags'" class="sidebar-content tags-content">
+        <TagsPanel @filter-change="handleTagFilterChange" />
+      </div>
+
       <!-- Markers Content -->
       <div v-else-if="activeTab === 'markers'" class="sidebar-content">
         <div
@@ -743,6 +917,11 @@ const headerTitle = computed(() => {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Relationships Content -->
+      <div v-else-if="activeTab === 'relationships'" class="sidebar-content relationships-content">
+        <RelationshipsPanel />
       </div>
 
       <!-- Clipart Content -->
@@ -2112,5 +2291,103 @@ const headerTitle = computed(() => {
 .task-clear-link:hover,
 .task-gantt-link:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+/* Tags Content */
+.tags-content {
+  padding: 0;
+}
+
+/* Relationships Content */
+.relationships-content {
+  padding: 0;
+}
+
+/* Node Style Section */
+.node-style-section {
+  background: rgba(59, 130, 246, 0.05);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.shape-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 8px;
+}
+
+.shape-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.shape-option {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.shape-option:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.shape-option.active {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+}
+
+.shape-icon {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.shape-option.active .shape-icon {
+  color: #60a5fa;
+}
+
+/* Node Color Picker */
+.node-color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-color-option {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.node-color-option:hover {
+  transform: scale(1.1);
+}
+
+.node-color-option.active {
+  border-color: white;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+}
+
+.custom-color {
+  position: relative;
+  width: 22px;
+  height: 22px;
+}
+
+.custom-color .node-color-option {
+  width: 100%;
+  height: 100%;
 }
 </style>
