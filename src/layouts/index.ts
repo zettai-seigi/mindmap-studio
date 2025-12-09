@@ -5,27 +5,40 @@
 import type { MindMapNode, RenderedNode, StructureType } from '../types';
 
 export interface LayoutConfig {
-  horizontalSpacing: number;
-  verticalSpacing: number;
-  levelSpacing: number;
+  // Fixed spacing measurements (in pixels)
+  horizontalGap: number;    // Gap between parent edge and child edge (horizontal layouts)
+  verticalGap: number;      // Gap between sibling nodes (vertical spacing)
+  levelGap: number;         // Gap between levels (for vertical layouts like org chart)
+
+  // Node dimensions
   nodeWidth: number;
   nodeHeight: number;
+  rootNodeWidth: number;
+  rootNodeHeight: number;
+
+  // Canvas center
   centerX: number;
   centerY: number;
 }
 
 const defaultConfig: LayoutConfig = {
-  horizontalSpacing: 60,
-  verticalSpacing: 30,
-  levelSpacing: 100,
-  nodeWidth: 120,
-  nodeHeight: 40,
+  // Fixed spacing - consistent gaps
+  horizontalGap: 80,        // 80px gap between parent right edge and child left edge
+  verticalGap: 20,          // 20px gap between sibling nodes
+  levelGap: 60,             // 60px gap between levels (for org chart)
+
+  // Node sizes
+  nodeWidth: 140,
+  nodeHeight: 36,
+  rootNodeWidth: 180,
+  rootNodeHeight: 48,
+
   centerX: 0,
   centerY: 0,
 };
 
 // ============================================
-// Mind Map Layout (Radial)
+// Mind Map Layout (Radial - Left/Right)
 // ============================================
 
 export function layoutMindMap(
@@ -40,10 +53,10 @@ export function layoutMindMap(
 
   const rootRendered: RenderedNode = {
     node: root,
-    x: rootX,
-    y: rootY,
-    width: cfg.nodeWidth * 1.5,
-    height: cfg.nodeHeight * 1.2,
+    x: rootX - cfg.rootNodeWidth / 2,
+    y: rootY - cfg.rootNodeHeight / 2,
+    width: cfg.rootNodeWidth,
+    height: cfg.rootNodeHeight,
     collapsed: root.collapsed || false,
     level: 0,
     children: [],
@@ -53,39 +66,37 @@ export function layoutMindMap(
     return rootRendered;
   }
 
-  // Split children into left and right
+  // Split children into right and left sides
   const half = Math.ceil(root.children.length / 2);
   const rightChildren = root.children.slice(0, half);
   const leftChildren = root.children.slice(half);
 
-  // Layout right side
-  let rightY = cfg.centerY - (rightChildren.length - 1) * cfg.verticalSpacing / 2;
-  rightChildren.forEach((child, index) => {
-    const childRendered = layoutBranch(
-      child,
-      cfg.centerX + cfg.levelSpacing,
-      rightY + index * getSubtreeHeight(child, cfg),
-      'right',
-      1,
-      cfg,
-      rootRendered
-    );
+  // Calculate heights for each side
+  const rightTotalHeight = calculateTotalHeight(rightChildren, cfg);
+  const leftTotalHeight = calculateTotalHeight(leftChildren, cfg);
+
+  // Layout right side children
+  let rightY = rootY - rightTotalHeight / 2;
+  rightChildren.forEach((child) => {
+    const subtreeHeight = calculateSubtreeHeight(child, cfg);
+    const childX = rootX + cfg.rootNodeWidth / 2 + cfg.horizontalGap;
+    const childY = rightY + subtreeHeight / 2 - cfg.nodeHeight / 2;
+
+    const childRendered = layoutBranch(child, childX, childY, 'right', 1, cfg, rootRendered);
     rootRendered.children.push(childRendered);
+    rightY += subtreeHeight;
   });
 
-  // Layout left side
-  let leftY = cfg.centerY - (leftChildren.length - 1) * cfg.verticalSpacing / 2;
-  leftChildren.forEach((child, index) => {
-    const childRendered = layoutBranch(
-      child,
-      cfg.centerX - cfg.levelSpacing - cfg.nodeWidth,
-      leftY + index * getSubtreeHeight(child, cfg),
-      'left',
-      1,
-      cfg,
-      rootRendered
-    );
+  // Layout left side children
+  let leftY = rootY - leftTotalHeight / 2;
+  leftChildren.forEach((child) => {
+    const subtreeHeight = calculateSubtreeHeight(child, cfg);
+    const childX = rootX - cfg.rootNodeWidth / 2 - cfg.horizontalGap - cfg.nodeWidth;
+    const childY = leftY + subtreeHeight / 2 - cfg.nodeHeight / 2;
+
+    const childRendered = layoutBranch(child, childX, childY, 'left', 1, cfg, rootRendered);
     rootRendered.children.push(childRendered);
+    leftY += subtreeHeight;
   });
 
   return rootRendered;
@@ -120,41 +131,41 @@ function layoutBranch(
     return rendered;
   }
 
-  const totalHeight = node.children.reduce(
-    (sum, child) => sum + getSubtreeHeight(child, cfg),
-    0
-  );
-  let childY = y - totalHeight / 2 + cfg.verticalSpacing / 2;
+  // Calculate total height of all children
+  const totalHeight = calculateTotalHeight(node.children, cfg);
+
+  // Start position for children (centered vertically around this node)
+  let childY = finalY + cfg.nodeHeight / 2 - totalHeight / 2;
 
   node.children.forEach((child) => {
-    const childX = direction === 'right'
-      ? x + cfg.levelSpacing
-      : x - cfg.levelSpacing;
+    const subtreeHeight = calculateSubtreeHeight(child, cfg);
 
-    const childRendered = layoutBranch(
-      child,
-      childX,
-      childY,
-      direction,
-      level + 1,
-      cfg,
-      rendered
-    );
+    // Position child with fixed horizontal gap
+    const childX = direction === 'right'
+      ? finalX + cfg.nodeWidth + cfg.horizontalGap
+      : finalX - cfg.horizontalGap - cfg.nodeWidth;
+
+    const childCenterY = childY + subtreeHeight / 2 - cfg.nodeHeight / 2;
+
+    const childRendered = layoutBranch(child, childX, childCenterY, direction, level + 1, cfg, rendered);
     rendered.children.push(childRendered);
-    childY += getSubtreeHeight(child, cfg);
+
+    childY += subtreeHeight;
   });
 
   return rendered;
 }
 
-function getSubtreeHeight(node: MindMapNode, cfg: LayoutConfig): number {
+function calculateSubtreeHeight(node: MindMapNode, cfg: LayoutConfig): number {
   if (node.collapsed || node.children.length === 0) {
-    return cfg.nodeHeight + cfg.verticalSpacing;
+    return cfg.nodeHeight + cfg.verticalGap;
   }
-  return node.children.reduce(
-    (sum, child) => sum + getSubtreeHeight(child, cfg),
-    0
-  );
+  return calculateTotalHeight(node.children, cfg);
+}
+
+function calculateTotalHeight(children: MindMapNode[], cfg: LayoutConfig): number {
+  if (children.length === 0) return 0;
+  return children.reduce((sum, child) => sum + calculateSubtreeHeight(child, cfg), 0);
 }
 
 // ============================================
@@ -172,10 +183,13 @@ export function layoutOrgChart(
   calculateSubtreeWidths(root, widths, cfg);
 
   // Second pass: position nodes
+  const rootX = root.position?.x ?? cfg.centerX;
+  const rootY = root.position?.y ?? cfg.centerY;
+
   const rootRendered = positionOrgChartNode(
     root,
-    cfg.centerX,
-    cfg.centerY,
+    rootX,
+    rootY,
     0,
     widths,
     cfg,
@@ -191,7 +205,7 @@ function calculateSubtreeWidths(
   cfg: LayoutConfig
 ): number {
   if (node.collapsed || node.children.length === 0) {
-    const width = cfg.nodeWidth + cfg.horizontalSpacing;
+    const width = cfg.nodeWidth + cfg.verticalGap;
     widths.set(node.id, width);
     return width;
   }
@@ -200,7 +214,7 @@ function calculateSubtreeWidths(
     (sum, child) => sum + calculateSubtreeWidths(child, widths, cfg),
     0
   );
-  const width = Math.max(cfg.nodeWidth + cfg.horizontalSpacing, childrenWidth);
+  const width = Math.max(cfg.nodeWidth + cfg.verticalGap, childrenWidth);
   widths.set(node.id, width);
   return width;
 }
@@ -215,15 +229,18 @@ function positionOrgChartNode(
   parent?: RenderedNode
 ): RenderedNode {
   // Use manual position if set
-  const finalX = node.position?.x ?? x;
+  const finalX = node.position?.x ?? (x - cfg.nodeWidth / 2);
   const finalY = node.position?.y ?? y;
+
+  const nodeWidth = level === 0 ? cfg.rootNodeWidth : cfg.nodeWidth;
+  const nodeHeight = level === 0 ? cfg.rootNodeHeight : cfg.nodeHeight;
 
   const rendered: RenderedNode = {
     node,
-    x: finalX,
+    x: level === 0 ? finalX - cfg.rootNodeWidth / 2 + cfg.nodeWidth / 2 : finalX,
     y: finalY,
-    width: cfg.nodeWidth,
-    height: cfg.nodeHeight,
+    width: nodeWidth,
+    height: nodeHeight,
     collapsed: node.collapsed || false,
     level,
     parent,
@@ -245,7 +262,7 @@ function positionOrgChartNode(
     const childRendered = positionOrgChartNode(
       child,
       childX + childWidth / 2,
-      y + cfg.levelSpacing,
+      y + nodeHeight + cfg.levelGap,
       level + 1,
       widths,
       cfg,
@@ -259,15 +276,14 @@ function positionOrgChartNode(
 }
 
 // ============================================
-// Tree Chart Layout (Spreading branches)
+// Tree Chart Layout
 // ============================================
 
 export function layoutTreeChart(
   root: MindMapNode,
   config: Partial<LayoutConfig> = {}
 ): RenderedNode {
-  const cfg = { ...defaultConfig, ...config };
-  return layoutOrgChart(root, cfg); // Similar to org chart
+  return layoutOrgChart(root, config);
 }
 
 // ============================================
@@ -280,12 +296,15 @@ export function layoutLogicChart(
 ): RenderedNode {
   const cfg = { ...defaultConfig, ...config };
 
+  const rootX = root.position?.x ?? (cfg.centerX - 300);
+  const rootY = root.position?.y ?? cfg.centerY;
+
   const rootRendered: RenderedNode = {
     node: root,
-    x: cfg.centerX - 200,
-    y: cfg.centerY,
-    width: cfg.nodeWidth * 1.2,
-    height: cfg.nodeHeight,
+    x: rootX,
+    y: rootY - cfg.rootNodeHeight / 2,
+    width: cfg.rootNodeWidth,
+    height: cfg.rootNodeHeight,
     collapsed: root.collapsed || false,
     level: 0,
     children: [],
@@ -295,41 +314,64 @@ export function layoutLogicChart(
     return rootRendered;
   }
 
-  layoutLogicBranch(root, rootRendered, 1, cfg);
+  // Calculate total height
+  const totalHeight = calculateTotalHeight(root.children, cfg);
+  let childY = rootY - totalHeight / 2;
+
+  root.children.forEach((child) => {
+    const subtreeHeight = calculateSubtreeHeight(child, cfg);
+    const childX = rootX + cfg.rootNodeWidth + cfg.horizontalGap;
+    const childCenterY = childY + subtreeHeight / 2 - cfg.nodeHeight / 2;
+
+    const childRendered = layoutLogicBranch(child, childX, childCenterY, 1, cfg, rootRendered);
+    rootRendered.children.push(childRendered);
+    childY += subtreeHeight;
+  });
 
   return rootRendered;
 }
 
 function layoutLogicBranch(
   node: MindMapNode,
-  rendered: RenderedNode,
+  x: number,
+  y: number,
   level: number,
-  cfg: LayoutConfig
-) {
-  if (node.collapsed || node.children.length === 0) return;
+  cfg: LayoutConfig,
+  parent: RenderedNode
+): RenderedNode {
+  const finalX = node.position?.x ?? x;
+  const finalY = node.position?.y ?? y;
 
-  const totalHeight = node.children.reduce(
-    (sum, child) => sum + getSubtreeHeight(child, cfg),
-    0
-  );
-  let childY = rendered.y - totalHeight / 2 + cfg.verticalSpacing / 2;
+  const rendered: RenderedNode = {
+    node,
+    x: finalX,
+    y: finalY,
+    width: cfg.nodeWidth,
+    height: cfg.nodeHeight,
+    collapsed: node.collapsed || false,
+    level,
+    parent,
+    children: [],
+  };
+
+  if (node.collapsed || node.children.length === 0) {
+    return rendered;
+  }
+
+  const totalHeight = calculateTotalHeight(node.children, cfg);
+  let childY = finalY + cfg.nodeHeight / 2 - totalHeight / 2;
 
   node.children.forEach((child) => {
-    const childRendered: RenderedNode = {
-      node: child,
-      x: rendered.x + cfg.levelSpacing,
-      y: childY,
-      width: cfg.nodeWidth,
-      height: cfg.nodeHeight,
-      collapsed: child.collapsed || false,
-      level,
-      parent: rendered,
-      children: [],
-    };
+    const subtreeHeight = calculateSubtreeHeight(child, cfg);
+    const childX = finalX + cfg.nodeWidth + cfg.horizontalGap;
+    const childCenterY = childY + subtreeHeight / 2 - cfg.nodeHeight / 2;
+
+    const childRendered = layoutLogicBranch(child, childX, childCenterY, level + 1, cfg, rendered);
     rendered.children.push(childRendered);
-    layoutLogicBranch(child, childRendered, level + 1, cfg);
-    childY += getSubtreeHeight(child, cfg);
+    childY += subtreeHeight;
   });
+
+  return rendered;
 }
 
 // ============================================
@@ -341,13 +383,20 @@ export function layoutFishbone(
   config: Partial<LayoutConfig> = {}
 ): RenderedNode {
   const cfg = { ...defaultConfig, ...config };
+  const SPINE_SPACING = 150;  // Fixed spacing along the spine
+  const BRANCH_OFFSET = 100;  // Fixed vertical offset for branches
+  const SUB_BRANCH_X = 50;    // Fixed horizontal offset for sub-branches
+  const SUB_BRANCH_Y = 40;    // Fixed vertical spacing for sub-branches
+
+  const rootX = root.position?.x ?? (cfg.centerX + 250);
+  const rootY = root.position?.y ?? cfg.centerY;
 
   const rootRendered: RenderedNode = {
     node: root,
-    x: cfg.centerX + 200,
-    y: cfg.centerY,
-    width: cfg.nodeWidth * 1.5,
-    height: cfg.nodeHeight * 1.2,
+    x: rootX,
+    y: rootY - cfg.rootNodeHeight / 2,
+    width: cfg.rootNodeWidth,
+    height: cfg.rootNodeHeight,
     collapsed: root.collapsed || false,
     level: 0,
     children: [],
@@ -357,17 +406,15 @@ export function layoutFishbone(
     return rootRendered;
   }
 
-  // Distribute children alternating above and below the spine
-  const spacing = cfg.levelSpacing * 1.5;
   root.children.forEach((child, index) => {
     const isAbove = index % 2 === 0;
-    const xPos = cfg.centerX - (root.children.length - index - 1) * spacing;
-    const yOffset = isAbove ? -80 : 80;
+    const xPos = rootX - (index + 1) * SPINE_SPACING;
+    const yPos = rootY + (isAbove ? -BRANCH_OFFSET : BRANCH_OFFSET);
 
     const childRendered: RenderedNode = {
       node: child,
-      x: xPos,
-      y: cfg.centerY + yOffset,
+      x: child.position?.x ?? xPos,
+      y: child.position?.y ?? (yPos - cfg.nodeHeight / 2),
       width: cfg.nodeWidth,
       height: cfg.nodeHeight,
       collapsed: child.collapsed || false,
@@ -376,38 +423,29 @@ export function layoutFishbone(
       children: [],
     };
 
-    // Layout sub-branches
-    layoutFishboneBranch(child, childRendered, 2, isAbove, cfg);
+    // Layout sub-branches with fixed spacing
+    if (!child.collapsed && child.children.length > 0) {
+      const direction = isAbove ? -1 : 1;
+      child.children.forEach((subChild, subIndex) => {
+        const subRendered: RenderedNode = {
+          node: subChild,
+          x: subChild.position?.x ?? (xPos - (subIndex + 1) * SUB_BRANCH_X),
+          y: subChild.position?.y ?? (yPos + direction * (subIndex + 1) * SUB_BRANCH_Y - cfg.nodeHeight / 2),
+          width: cfg.nodeWidth * 0.85,
+          height: cfg.nodeHeight * 0.85,
+          collapsed: subChild.collapsed || false,
+          level: 2,
+          parent: childRendered,
+          children: [],
+        };
+        childRendered.children.push(subRendered);
+      });
+    }
+
     rootRendered.children.push(childRendered);
   });
 
   return rootRendered;
-}
-
-function layoutFishboneBranch(
-  node: MindMapNode,
-  rendered: RenderedNode,
-  level: number,
-  isAbove: boolean,
-  cfg: LayoutConfig
-) {
-  if (node.collapsed || node.children.length === 0) return;
-
-  const direction = isAbove ? -1 : 1;
-  node.children.forEach((child, index) => {
-    const childRendered: RenderedNode = {
-      node: child,
-      x: rendered.x - (index + 1) * 40,
-      y: rendered.y + direction * (index + 1) * 35,
-      width: cfg.nodeWidth * 0.8,
-      height: cfg.nodeHeight * 0.8,
-      collapsed: child.collapsed || false,
-      level,
-      parent: rendered,
-      children: [],
-    };
-    rendered.children.push(childRendered);
-  });
 }
 
 // ============================================
@@ -420,13 +458,19 @@ export function layoutTimeline(
   horizontal: boolean = true
 ): RenderedNode {
   const cfg = { ...defaultConfig, ...config };
+  const TIMELINE_SPACING = 160;  // Fixed spacing between timeline items
+  const BRANCH_OFFSET = 80;      // Fixed offset for alternating items
+  const SUB_ITEM_SPACING = 45;   // Fixed spacing for sub-items
+
+  const rootX = root.position?.x ?? (horizontal ? cfg.centerX - 350 : cfg.centerX);
+  const rootY = root.position?.y ?? (horizontal ? cfg.centerY : cfg.centerY - 250);
 
   const rootRendered: RenderedNode = {
     node: root,
-    x: horizontal ? cfg.centerX - 300 : cfg.centerX,
-    y: horizontal ? cfg.centerY : cfg.centerY - 200,
-    width: cfg.nodeWidth,
-    height: cfg.nodeHeight,
+    x: rootX - cfg.rootNodeWidth / 2,
+    y: rootY - cfg.rootNodeHeight / 2,
+    width: cfg.rootNodeWidth,
+    height: cfg.rootNodeHeight,
     collapsed: root.collapsed || false,
     level: 0,
     children: [],
@@ -437,14 +481,19 @@ export function layoutTimeline(
   }
 
   root.children.forEach((child, index) => {
+    const isAlternate = index % 2 === 0;
+
+    const childX = horizontal
+      ? rootX + (index + 1) * TIMELINE_SPACING
+      : rootX;
+    const childY = horizontal
+      ? rootY + (isAlternate ? -BRANCH_OFFSET : BRANCH_OFFSET)
+      : rootY + (index + 1) * TIMELINE_SPACING;
+
     const childRendered: RenderedNode = {
       node: child,
-      x: horizontal
-        ? rootRendered.x + (index + 1) * cfg.levelSpacing
-        : cfg.centerX,
-      y: horizontal
-        ? cfg.centerY + (index % 2 === 0 ? -60 : 60)
-        : rootRendered.y + (index + 1) * cfg.levelSpacing,
+      x: child.position?.x ?? (childX - cfg.nodeWidth / 2),
+      y: child.position?.y ?? (childY - cfg.nodeHeight / 2),
       width: cfg.nodeWidth,
       height: cfg.nodeHeight,
       collapsed: child.collapsed || false,
@@ -453,20 +502,23 @@ export function layoutTimeline(
       children: [],
     };
 
-    // Layout sub-items
+    // Layout sub-items with fixed spacing
     if (!child.collapsed && child.children.length > 0) {
-      const subDirection = horizontal ? (index % 2 === 0 ? -1 : 1) : 1;
+      const direction = horizontal ? (isAlternate ? -1 : 1) : 1;
       child.children.forEach((subChild, subIndex) => {
+        const subX = horizontal
+          ? childX
+          : childX + (subIndex + 1) * SUB_ITEM_SPACING;
+        const subY = horizontal
+          ? childY + direction * (subIndex + 1) * SUB_ITEM_SPACING
+          : childY;
+
         const subRendered: RenderedNode = {
           node: subChild,
-          x: horizontal
-            ? childRendered.x
-            : childRendered.x + (subIndex + 1) * 60,
-          y: horizontal
-            ? childRendered.y + subDirection * (subIndex + 1) * 35
-            : childRendered.y,
-          width: cfg.nodeWidth * 0.8,
-          height: cfg.nodeHeight * 0.8,
+          x: subChild.position?.x ?? (subX - cfg.nodeWidth * 0.4),
+          y: subChild.position?.y ?? (subY - cfg.nodeHeight * 0.4),
+          width: cfg.nodeWidth * 0.85,
+          height: cfg.nodeHeight * 0.85,
           collapsed: subChild.collapsed || false,
           level: 2,
           parent: childRendered,
