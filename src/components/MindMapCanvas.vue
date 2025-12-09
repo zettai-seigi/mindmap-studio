@@ -1323,10 +1323,11 @@ function handleMouseUp(e: MouseEvent) {
         // Reparent the node
         store.moveNode(draggedNode.value.node.id, dropTarget.node.id);
       } else {
-        // Save the new position so it sticks
+        // Save the new position (center point, not top-left corner)
+        // Layout expects position to be center of the node
         store.setNodePosition(draggedNode.value.node.id, {
-          x: draggedNode.value.x,
-          y: draggedNode.value.y,
+          x: draggedNode.value.x + draggedNode.value.width / 2,
+          y: draggedNode.value.y + draggedNode.value.height / 2,
         });
       }
     }
