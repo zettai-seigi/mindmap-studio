@@ -170,59 +170,39 @@ function drawConnection(
   c.lineCap = 'round';
   c.lineJoin = 'round';
 
-  // Determine connection points based on child position relative to parent
-  const parentCenterX = parent.x + parent.width / 2;
   const parentCenterY = parent.y + parent.height / 2;
-  const childCenterX = child.x + child.width / 2;
   const childCenterY = child.y + child.height / 2;
 
-  // Child is to the right of parent
-  const isRight = childCenterX > parentCenterX;
-  // Child is below parent
-  const isBelow = childCenterY > parentCenterY;
+  // Determine if child is to the right or left of parent
+  const childIsRight = child.x > parent.x + parent.width / 2;
 
   let startX: number, startY: number, endX: number, endY: number;
 
-  // For mind map (horizontal) layout
-  if (Math.abs(childCenterX - parentCenterX) > Math.abs(childCenterY - parentCenterY)) {
-    // Horizontal connection
-    startX = isRight ? parent.x + parent.width : parent.x;
+  if (childIsRight) {
+    // Child is on the right - connect from parent's right edge to child's left edge
+    startX = parent.x + parent.width;
     startY = parentCenterY;
-    endX = isRight ? child.x : child.x + child.width;
+    endX = child.x;
     endY = childCenterY;
-
-    // Draw smooth S-curve with consistent curvature
-    const horizontalDist = Math.abs(endX - startX);
-    const controlOffset = horizontalDist * 0.4; // Fixed 40% control point
-
-    c.beginPath();
-    c.moveTo(startX, startY);
-    c.bezierCurveTo(
-      startX + (isRight ? controlOffset : -controlOffset), startY,
-      endX + (isRight ? -controlOffset : controlOffset), endY,
-      endX, endY
-    );
-    c.stroke();
   } else {
-    // Vertical connection (for org chart style)
-    startX = parentCenterX;
-    startY = isBelow ? parent.y + parent.height : parent.y;
-    endX = childCenterX;
-    endY = isBelow ? child.y : child.y + child.height;
-
-    // Draw smooth curve
-    const verticalDist = Math.abs(endY - startY);
-    const controlOffset = verticalDist * 0.4;
-
-    c.beginPath();
-    c.moveTo(startX, startY);
-    c.bezierCurveTo(
-      startX, startY + (isBelow ? controlOffset : -controlOffset),
-      endX, endY + (isBelow ? -controlOffset : controlOffset),
-      endX, endY
-    );
-    c.stroke();
+    // Child is on the left - connect from parent's left edge to child's right edge
+    startX = parent.x;
+    startY = parentCenterY;
+    endX = child.x + child.width;
+    endY = childCenterY;
   }
+
+  // Calculate control points for smooth S-curve
+  const midX = (startX + endX) / 2;
+
+  c.beginPath();
+  c.moveTo(startX, startY);
+  c.bezierCurveTo(
+    midX, startY,  // First control point - horizontal from start
+    midX, endY,    // Second control point - horizontal to end
+    endX, endY
+  );
+  c.stroke();
 }
 
 function drawRelationships(c: CanvasRenderingContext2D) {
