@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
 import { layoutNodes, getAllRenderedNodes, getBoundingBox } from '../layouts';
 import type { RenderedNode } from '../types';
@@ -7,6 +7,7 @@ import type { RenderedNode } from '../types';
 const props = defineProps<{
   canvasWidth: number;
   canvasHeight: number;
+  visible: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -18,8 +19,8 @@ const minimapRef = ref<HTMLCanvasElement | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
 const ctx = ref<CanvasRenderingContext2D | null>(null);
 
-const MINIMAP_WIDTH = 180;
-const MINIMAP_HEIGHT = 120;
+const MINIMAP_WIDTH = 200;
+const MINIMAP_HEIGHT = 140;
 
 // Calculate scale to fit all nodes
 const minimapData = computed(() => {
@@ -79,7 +80,12 @@ const viewport = computed(() => {
   };
 });
 
-function render() {
+// Cache for node rendering - only redraw nodes when map changes
+let cachedNodeImageData: ImageData | null = null;
+let lastMapUpdateTime = 0;
+let lastStructure = '';
+
+function renderNodes() {
   if (!ctx.value || !minimapRef.value || !minimapData.value) return;
 
   const canvas = minimapRef.value;
@@ -89,27 +95,50 @@ function render() {
   // Clear
   c.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw background
-  c.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  // Draw background - match the dark theme
+  c.fillStyle = 'rgba(30, 41, 59, 0.95)';
   c.fillRect(0, 0, canvas.width, canvas.height);
 
   // Draw nodes
   c.save();
   c.scale(scale, scale);
   c.translate(offsetX, offsetY);
-
   drawMinimapNodes(c, rendered);
-
   c.restore();
 
-  // Draw viewport rectangle
+  // Cache the rendered nodes
+  cachedNodeImageData = c.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function render() {
+  if (!ctx.value || !minimapRef.value || !minimapData.value) return;
+
+  const canvas = minimapRef.value;
+  const c = ctx.value;
+
+  // Check if we need to re-render nodes (map changed)
+  const currentMapTime = store.currentMap.updatedAt;
+  const currentStructure = store.structure;
+
+  if (!cachedNodeImageData || currentMapTime !== lastMapUpdateTime || currentStructure !== lastStructure) {
+    lastMapUpdateTime = currentMapTime;
+    lastStructure = currentStructure;
+    renderNodes();
+  } else {
+    // Just restore cached nodes
+    c.putImageData(cachedNodeImageData, 0, 0);
+  }
+
+  // Draw viewport rectangle (the draggable box) - this is always fast
   if (viewport.value) {
     const vp = viewport.value;
-    c.strokeStyle = '#3b82f6';
+    // Fill with semi-transparent
+    c.fillStyle = 'rgba(59, 130, 246, 0.15)';
+    c.fillRect(vp.x, vp.y, vp.width, vp.height);
+    // Border
+    c.strokeStyle = 'rgba(59, 130, 246, 0.8)';
     c.lineWidth = 2;
     c.strokeRect(vp.x, vp.y, vp.width, vp.height);
-    c.fillStyle = 'rgba(59, 130, 246, 0.1)';
-    c.fillRect(vp.x, vp.y, vp.width, vp.height);
   }
 }
 
@@ -126,7 +155,7 @@ function drawMinimapNodes(c: CanvasRenderingContext2D, node: RenderedNode) {
   // Draw children
   node.children.forEach(child => {
     // Draw connection line
-    c.strokeStyle = '#94a3b8';
+    c.strokeStyle = 'rgba(148, 163, 184, 0.5)';
     c.lineWidth = 1;
     c.beginPath();
     c.moveTo(node.x + node.width / 2, node.y + node.height / 2);
@@ -138,7 +167,7 @@ function drawMinimapNodes(c: CanvasRenderingContext2D, node: RenderedNode) {
 }
 
 function handleClick(e: MouseEvent) {
-  if (!minimapData.value || !containerRef.value) return;
+  if (!minimapData.value || !containerRef.value || !props.visible) return;
 
   const rect = containerRef.value.getBoundingClientRect();
   const clickX = e.clientX - rect.left;
@@ -160,12 +189,13 @@ function handleClick(e: MouseEvent) {
 let isDragging = false;
 
 function handleMouseDown(e: MouseEvent) {
+  if (!props.visible) return;
   isDragging = true;
   handleClick(e);
 }
 
 function handleMouseMove(e: MouseEvent) {
-  if (isDragging) {
+  if (isDragging && props.visible) {
     handleClick(e);
   }
 }
@@ -193,47 +223,58 @@ onUnmounted(() => {
   window.removeEventListener('mouseup', handleMouseUp);
 });
 
-// Watch for changes
-watch(
-  [() => store.currentMap, () => store.structure, () => store.viewState],
-  () => render(),
-  { deep: true }
-);
+// Use watchEffect for immediate reactivity - it auto-tracks dependencies
+watchEffect(() => {
+  // Access reactive values to track them
+  const _zoom = store.viewState.zoom;
+  const _panX = store.viewState.panX;
+  const _panY = store.viewState.panY;
+  const _structure = store.structure;
+  const _map = store.currentMap;
+  const _width = props.canvasWidth;
+  const _height = props.canvasHeight;
+  const _visible = props.visible;
 
-watch(
-  [() => props.canvasWidth, () => props.canvasHeight],
-  () => render()
-);
+  // Render immediately
+  render();
+});
 </script>
 
 <template>
   <div
+    v-show="visible"
     ref="containerRef"
-    class="minimap-container absolute bottom-4 left-4 rounded-lg overflow-hidden cursor-crosshair select-none"
+    class="minimap-panel"
     @mousedown="handleMouseDown"
     @mousemove="handleMouseMove"
   >
     <canvas
       ref="minimapRef"
       :style="{ width: `${MINIMAP_WIDTH}px`, height: `${MINIMAP_HEIGHT}px` }"
+      class="minimap-canvas"
     />
-    <div class="absolute top-1.5 left-2 text-[10px] font-medium text-slate-500 pointer-events-none">
-      Overview
-    </div>
   </div>
 </template>
 
 <style scoped>
-.minimap-container {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+.minimap-panel {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+  background: rgba(30, 30, 30, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.08),
-    0 1px 3px rgba(0, 0, 0, 0.05);
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-.dark .minimap-container {
-  background: rgba(30, 41, 59, 0.95);
-  border-color: rgba(255, 255, 255, 0.1);
+.minimap-canvas {
+  display: block;
 }
 </style>
