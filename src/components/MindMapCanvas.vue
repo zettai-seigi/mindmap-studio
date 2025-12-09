@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
 import { layoutNodes, getAllRenderedNodes, findRenderedNodeById } from '../layouts';
 import type { RenderedNode, Position } from '../types';
+import ContextMenu from './ContextMenu.vue';
 
 const store = useMindMapStore();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
 const ctx = ref<CanvasRenderingContext2D | null>(null);
+const textInputRef = ref<HTMLInputElement | null>(null);
 
 // Canvas dimensions
 const canvasWidth = ref(0);
@@ -19,6 +21,19 @@ const isDragging = ref(false);
 const isPanning = ref(false);
 const dragStart = ref<Position | null>(null);
 const lastMousePos = ref<Position | null>(null);
+const draggedNode = ref<RenderedNode | null>(null);
+const dragOffset = ref<Position>({ x: 0, y: 0 });
+
+// Context menu state
+const contextMenu = ref<{ show: boolean; x: number; y: number; nodeId: string | null }>({
+  show: false,
+  x: 0,
+  y: 0,
+  nodeId: null,
+});
+
+// Inline editing state
+const editingNode = ref<{ id: string; x: number; y: number; width: number; height: number; text: string } | null>(null);
 
 // Rendered layout
 const renderedRoot = ref<RenderedNode | null>(null);
@@ -387,6 +402,14 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode) {
 // ============================================
 
 function handleMouseDown(e: MouseEvent) {
+  // Close context menu on any click
+  contextMenu.value.show = false;
+
+  // Cancel editing if clicking elsewhere
+  if (editingNode.value) {
+    finishEditing();
+  }
+
   const pos = getMousePosition(e);
   lastMousePos.value = pos;
 
@@ -399,40 +422,50 @@ function handleMouseDown(e: MouseEvent) {
     return;
   }
 
-  if (clickedNode) {
-    if (e.shiftKey) {
-      store.selectNode(clickedNode.node.id, true);
+  // Handle link mode
+  if (store.canvasState.linkMode.active && clickedNode && e.button === 0) {
+    store.completeLinkMode(clickedNode.node.id);
+    render();
+    return;
+  }
+
+  if (e.button === 0) {
+    // Left click
+    if (clickedNode) {
+      if (e.shiftKey) {
+        store.selectNode(clickedNode.node.id, true);
+      } else {
+        store.selectNode(clickedNode.node.id);
+      }
+
+      // Check if clicked on collapse indicator
+      const indicatorX = clickedNode.x + clickedNode.width - 5;
+      const indicatorY = clickedNode.y + clickedNode.height / 2;
+      const dist = Math.sqrt(
+        Math.pow(pos.x - indicatorX, 2) + Math.pow(pos.y - indicatorY, 2)
+      );
+
+      if (dist < 10 && clickedNode.node.children.length > 0) {
+        store.toggleCollapse(clickedNode.node.id);
+        updateLayout();
+        render();
+        return;
+      }
+
+      // Start dragging the node
+      isDragging.value = true;
+      draggedNode.value = clickedNode;
+      dragOffset.value = {
+        x: pos.x - clickedNode.x,
+        y: pos.y - clickedNode.y,
+      };
     } else {
-      store.selectNode(clickedNode.node.id);
+      // Click on empty space
+      store.clearSelection();
+
+      // Start selection box
+      store.canvasState.selectionBox = { start: pos, end: pos };
     }
-
-    // Check if clicked on collapse indicator
-    const indicatorX = clickedNode.x + clickedNode.width - 5;
-    const indicatorY = clickedNode.y + clickedNode.height / 2;
-    const dist = Math.sqrt(
-      Math.pow(pos.x - indicatorX, 2) + Math.pow(pos.y - indicatorY, 2)
-    );
-
-    if (dist < 10 && clickedNode.node.children.length > 0) {
-      store.toggleCollapse(clickedNode.node.id);
-      updateLayout();
-      render();
-      return;
-    }
-
-    // Start dragging
-    isDragging.value = true;
-    dragStart.value = {
-      x: pos.x - clickedNode.x,
-      y: pos.y - clickedNode.y,
-    };
-  } else {
-    // Click on empty space
-    store.clearSelection();
-
-    // Double click: add floating topic
-    // Start selection box
-    store.canvasState.selectionBox = { start: pos, end: pos };
   }
 
   render();
@@ -441,13 +474,16 @@ function handleMouseDown(e: MouseEvent) {
 function handleMouseMove(e: MouseEvent) {
   const pos = getMousePosition(e);
 
-  if (isPanning.value && dragStart.value) {
-    const dx = pos.x - lastMousePos.value!.x;
-    const dy = pos.y - lastMousePos.value!.y;
+  if (isPanning.value && lastMousePos.value) {
+    const dx = pos.x - lastMousePos.value.x;
+    const dy = pos.y - lastMousePos.value.y;
     store.setPan(store.viewState.panX + dx, store.viewState.panY + dy);
     render();
-  } else if (isDragging.value && store.canvasState.selectedNodeIds.length > 0) {
-    // TODO: Implement node dragging
+  } else if (isDragging.value && draggedNode.value) {
+    // Move the dragged node visually
+    draggedNode.value.x = pos.x - dragOffset.value.x;
+    draggedNode.value.y = pos.y - dragOffset.value.y;
+    render();
   } else if (store.canvasState.selectionBox) {
     store.canvasState.selectionBox.end = pos;
     render();
@@ -464,7 +500,9 @@ function handleMouseMove(e: MouseEvent) {
   lastMousePos.value = pos;
 }
 
-function handleMouseUp(_e: MouseEvent) {
+function handleMouseUp(e: MouseEvent) {
+  const pos = getMousePosition(e);
+
   if (store.canvasState.selectionBox) {
     // Select nodes in box
     const box = store.canvasState.selectionBox;
@@ -473,21 +511,36 @@ function handleMouseUp(_e: MouseEvent) {
     const minY = Math.min(box.start.y, box.end.y);
     const maxY = Math.max(box.start.y, box.end.y);
 
-    allNodes.value.forEach(node => {
-      if (
-        node.x >= minX && node.x + node.width <= maxX &&
-        node.y >= minY && node.y + node.height <= maxY
-      ) {
-        store.selectNode(node.node.id, true);
-      }
-    });
+    // Only select if the box has some size (not just a click)
+    if (Math.abs(maxX - minX) > 5 || Math.abs(maxY - minY) > 5) {
+      allNodes.value.forEach(node => {
+        if (
+          node.x >= minX && node.x + node.width <= maxX &&
+          node.y >= minY && node.y + node.height <= maxY
+        ) {
+          store.selectNode(node.node.id, true);
+        }
+      });
+    }
 
     store.canvasState.selectionBox = null;
+  }
+
+  // Handle node drop - check if dropped on another node for reparenting
+  if (isDragging.value && draggedNode.value) {
+    const dropTarget = findNodeAtPosition(pos);
+    if (dropTarget && dropTarget.node.id !== draggedNode.value.node.id) {
+      // Reparent the node
+      store.moveNode(draggedNode.value.node.id, dropTarget.node.id);
+    }
+    // Re-layout after drag
+    updateLayout();
   }
 
   isDragging.value = false;
   isPanning.value = false;
   dragStart.value = null;
+  draggedNode.value = null;
   render();
 }
 
@@ -496,13 +549,77 @@ function handleDoubleClick(e: MouseEvent) {
   const clickedNode = findNodeAtPosition(pos);
 
   if (clickedNode) {
-    store.startEditing(clickedNode.node.id);
-    // TODO: Show text input
+    // Show inline text editor
+    const canvas = canvasRef.value;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const screenX = (clickedNode.x - canvas.width / 2 + store.viewState.panX) * store.viewState.zoom + canvas.width / 2 + rect.left;
+    const screenY = (clickedNode.y - canvas.height / 2 + store.viewState.panY) * store.viewState.zoom + canvas.height / 2 + rect.top;
+
+    editingNode.value = {
+      id: clickedNode.node.id,
+      x: screenX,
+      y: screenY,
+      width: clickedNode.width * store.viewState.zoom,
+      height: clickedNode.height * store.viewState.zoom,
+      text: clickedNode.node.text,
+    };
+
+    nextTick(() => {
+      textInputRef.value?.focus();
+      textInputRef.value?.select();
+    });
   } else {
     // Add floating topic
     store.addFloatingTopic(pos, 'New Topic');
     updateLayout();
     render();
+  }
+}
+
+function handleContextMenu(e: MouseEvent) {
+  e.preventDefault();
+  const pos = getMousePosition(e);
+  const clickedNode = findNodeAtPosition(pos);
+
+  if (clickedNode) {
+    store.selectNode(clickedNode.node.id);
+  }
+
+  contextMenu.value = {
+    show: true,
+    x: e.clientX,
+    y: e.clientY,
+    nodeId: clickedNode?.node.id || null,
+  };
+
+  render();
+}
+
+function closeContextMenu() {
+  contextMenu.value.show = false;
+}
+
+function finishEditing() {
+  if (editingNode.value) {
+    store.updateNodeText(editingNode.value.id, editingNode.value.text);
+    editingNode.value = null;
+    updateLayout();
+    render();
+  }
+}
+
+function cancelEditing() {
+  editingNode.value = null;
+}
+
+function handleEditKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    finishEditing();
+  } else if (e.key === 'Escape') {
+    cancelEditing();
   }
 }
 
@@ -597,6 +714,46 @@ function handleKeyDown(e: KeyboardEvent) {
         e.preventDefault();
         store.resetView();
         render();
+      }
+      break;
+
+    case 'Escape':
+      if (store.canvasState.linkMode.active) {
+        store.cancelLinkMode();
+        render();
+      }
+      if (editingNode.value) {
+        cancelEditing();
+      }
+      contextMenu.value.show = false;
+      break;
+
+    case 'F2':
+      e.preventDefault();
+      if (selectedId) {
+        const node = renderedRoot.value ? findRenderedNodeById(renderedRoot.value, selectedId) : null;
+        if (node) {
+          const canvas = canvasRef.value;
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect();
+            const screenX = (node.x - canvas.width / 2 + store.viewState.panX) * store.viewState.zoom + canvas.width / 2 + rect.left;
+            const screenY = (node.y - canvas.height / 2 + store.viewState.panY) * store.viewState.zoom + canvas.height / 2 + rect.top;
+
+            editingNode.value = {
+              id: node.node.id,
+              x: screenX,
+              y: screenY,
+              width: node.width * store.viewState.zoom,
+              height: node.height * store.viewState.zoom,
+              text: node.node.text,
+            };
+
+            nextTick(() => {
+              textInputRef.value?.focus();
+              textInputRef.value?.select();
+            });
+          }
+        }
       }
       break;
   }
@@ -694,18 +851,60 @@ watch(
 <template>
   <div
     ref="containerRef"
-    class="w-full h-full overflow-hidden bg-white dark:bg-slate-900"
+    class="w-full h-full overflow-hidden bg-white dark:bg-slate-900 relative"
   >
     <canvas
       ref="canvasRef"
-      class="cursor-crosshair"
+      :class="[
+        isDragging ? 'cursor-grabbing' : isPanning ? 'cursor-move' : 'cursor-default'
+      ]"
       @mousedown="handleMouseDown"
       @mousemove="handleMouseMove"
       @mouseup="handleMouseUp"
       @mouseleave="handleMouseUp"
       @dblclick="handleDoubleClick"
       @wheel="handleWheel"
-      @contextmenu.prevent
+      @contextmenu="handleContextMenu"
     />
+
+    <!-- Inline Text Editor -->
+    <input
+      v-if="editingNode"
+      ref="textInputRef"
+      v-model="editingNode.text"
+      type="text"
+      class="fixed z-50 px-2 py-1 text-sm bg-white dark:bg-slate-800 border-2 border-blue-500 rounded outline-none shadow-lg"
+      :style="{
+        left: `${editingNode.x}px`,
+        top: `${editingNode.y}px`,
+        width: `${Math.max(editingNode.width, 150)}px`,
+        height: `${editingNode.height}px`,
+      }"
+      @keydown="handleEditKeydown"
+      @blur="finishEditing"
+    />
+
+    <!-- Context Menu -->
+    <ContextMenu
+      v-if="contextMenu.show"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
+      :node-id="contextMenu.nodeId"
+      @close="closeContextMenu"
+    />
+
+    <!-- Link Mode Indicator -->
+    <div
+      v-if="store.canvasState.linkMode.active"
+      class="fixed top-20 left-1/2 -translate-x-1/2 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-40 flex items-center gap-2"
+    >
+      <span>Click on another node to create a relationship</span>
+      <button
+        class="text-sm bg-white/20 hover:bg-white/30 px-2 py-1 rounded"
+        @click="store.cancelLinkMode()"
+      >
+        Cancel (Esc)
+      </button>
+    </div>
   </div>
 </template>
