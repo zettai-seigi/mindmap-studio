@@ -31,6 +31,8 @@ const dragStart = ref<Position | null>(null);
 const lastMousePos = ref<Position | null>(null);
 const draggedNode = ref<RenderedNode | null>(null);
 const dragOffset = ref<Position>({ x: 0, y: 0 });
+const dragStartNodePos = ref<Position | null>(null); // Original node position when drag started
+const hasDraggedSignificantly = ref(false); // Track if node actually moved
 
 // Relationship control point dragging
 const draggingControlPoint = ref<{ relId: string; point: 1 | 2 } | null>(null);
@@ -1169,6 +1171,9 @@ function handleMouseDown(e: MouseEvent) {
         x: pos.x - clickedNode.x,
         y: pos.y - clickedNode.y,
       };
+      // Store original position to detect if drag actually occurred
+      dragStartNodePos.value = { x: clickedNode.x, y: clickedNode.y };
+      hasDraggedSignificantly.value = false;
     } else {
       // Click on empty space - clearSelection also clears selectedRelationshipId
       store.clearSelection();
@@ -1210,6 +1215,15 @@ function handleMouseMove(e: MouseEvent) {
     // Move the dragged node visually
     draggedNode.value.x = pos.x - dragOffset.value.x;
     draggedNode.value.y = pos.y - dragOffset.value.y;
+
+    // Check if node has moved significantly from starting position
+    if (dragStartNodePos.value && !hasDraggedSignificantly.value) {
+      const dx = draggedNode.value.x - dragStartNodePos.value.x;
+      const dy = draggedNode.value.y - dragStartNodePos.value.y;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        hasDraggedSignificantly.value = true;
+      }
+    }
     render();
   } else if (store.canvasState.selectionBox) {
     store.canvasState.selectionBox.end = pos;
@@ -1302,18 +1316,21 @@ function handleMouseUp(e: MouseEvent) {
   if (isDragging.value && draggedNode.value) {
     const dropTarget = findNodeAtPosition(pos);
 
-    // Check if dropped on another node for reparenting
-    if (dropTarget && dropTarget.node.id !== draggedNode.value.node.id) {
-      // Reparent the node
-      store.moveNode(draggedNode.value.node.id, dropTarget.node.id);
-    } else {
-      // Save the new position so it sticks
-      store.setNodePosition(draggedNode.value.node.id, {
-        x: draggedNode.value.x,
-        y: draggedNode.value.y,
-      });
+    // Only process if node was actually dragged (not just clicked)
+    if (hasDraggedSignificantly.value) {
+      // Check if dropped on another node for reparenting
+      if (dropTarget && dropTarget.node.id !== draggedNode.value.node.id) {
+        // Reparent the node
+        store.moveNode(draggedNode.value.node.id, dropTarget.node.id);
+      } else {
+        // Save the new position so it sticks
+        store.setNodePosition(draggedNode.value.node.id, {
+          x: draggedNode.value.x,
+          y: draggedNode.value.y,
+        });
+      }
     }
-    // Re-layout after drag
+    // Re-layout after drag (or click to restore position)
     updateLayout();
   }
 
@@ -1321,6 +1338,8 @@ function handleMouseUp(e: MouseEvent) {
   isPanning.value = false;
   dragStart.value = null;
   draggedNode.value = null;
+  dragStartNodePos.value = null;
+  hasDraggedSignificantly.value = false;
   render();
 }
 
