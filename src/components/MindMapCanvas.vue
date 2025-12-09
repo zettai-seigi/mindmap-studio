@@ -864,14 +864,23 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown);
 });
 
-// Watch for store changes
+// Watch for store changes - watch currentMap for undo/redo support
 watch(
-  () => [store.root, store.structure, store.floatingTopics],
+  () => store.currentMap,
   () => {
     updateLayout();
     render();
   },
   { deep: true }
+);
+
+// Also watch structure specifically for immediate layout changes
+watch(
+  () => store.structure,
+  () => {
+    updateLayout();
+    render();
+  }
 );
 </script>
 
