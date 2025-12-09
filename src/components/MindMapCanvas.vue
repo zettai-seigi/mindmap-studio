@@ -4,6 +4,9 @@ import { useMindMapStore } from '../stores/mindmap';
 import { layoutNodes, getAllRenderedNodes, findRenderedNodeById } from '../layouts';
 import type { RenderedNode, Position } from '../types';
 import ContextMenu from './ContextMenu.vue';
+import { getMarkerDisplay } from '../composables/useMarkerDisplay';
+import { useCanvasCoordinates } from '../composables/useCanvasCoordinates';
+import { useCanvasHitDetection } from '../composables/useCanvasHitDetection';
 
 const props = defineProps<{
   focusMode?: boolean;
@@ -69,6 +72,39 @@ const allNodes = computed(() => {
 
 // Colors based on theme
 const colors = computed(() => store.theme.colors);
+
+// Computed relationships from store
+const relationships = computed(() => store.relationships);
+
+// ============================================
+// Composables Setup
+// ============================================
+
+// Canvas coordinate utilities
+const { screenToWorld, getNodeEdgePoint } = useCanvasCoordinates({
+  canvasRef,
+  canvasWidth,
+  canvasHeight,
+  zoom: () => store.viewState.zoom,
+  panX: () => store.viewState.panX,
+  panY: () => store.viewState.panY,
+});
+
+// Hit detection utilities
+const {
+  findNodeAtPosition,
+  findRelationshipAtPosition,
+  findControlPointAtPosition,
+  findRelationshipLabelAtPosition,
+} = useCanvasHitDetection({
+  renderedRoot,
+  allNodes,
+  relationships,
+  selectedRelationshipId,
+  relationshipLabelPositions,
+  controlPointRadius,
+  getRelationshipControlPoints,
+});
 
 // ============================================
 // Layout & Rendering
@@ -387,48 +423,6 @@ function getRelationshipControlPoints(rel: typeof store.relationships[0], startX
   };
 
   return { cp1, cp2, midX, midY };
-}
-
-// Find intersection point of a line from center to a point with the node's rectangular boundary
-function getNodeEdgePoint(
-  node: { x: number; y: number; width: number; height: number },
-  targetX: number,
-  targetY: number
-): Position {
-  const centerX = node.x + node.width / 2;
-  const centerY = node.y + node.height / 2;
-
-  const dx = targetX - centerX;
-  const dy = targetY - centerY;
-
-  if (dx === 0 && dy === 0) {
-    return { x: centerX, y: centerY };
-  }
-
-  const halfWidth = node.width / 2 + 4; // Add small padding
-  const halfHeight = node.height / 2 + 4;
-
-  // Calculate intersection with rectangle edges
-  let t = 1;
-
-  if (dx !== 0) {
-    const tLeft = -halfWidth / dx;
-    const tRight = halfWidth / dx;
-    if (tLeft > 0) t = Math.min(t, tLeft);
-    if (tRight > 0) t = Math.min(t, tRight);
-  }
-
-  if (dy !== 0) {
-    const tTop = -halfHeight / dy;
-    const tBottom = halfHeight / dy;
-    if (tTop > 0) t = Math.min(t, tTop);
-    if (tBottom > 0) t = Math.min(t, tBottom);
-  }
-
-  return {
-    x: centerX + dx * t,
-    y: centerY + dy * t
-  };
 }
 
 function drawRelationships(c: CanvasRenderingContext2D) {
@@ -1064,161 +1058,6 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode, focusBran
   c.globalAlpha = 1;
 }
 
-// Helper function to get marker display info
-function getMarkerDisplay(markerId: string, defaultColor?: string): {
-  type: 'badge' | 'emoji' | 'icon' | 'circle';
-  label?: string;
-  emoji?: string;
-  icon?: string;
-  bg?: string;
-  color?: string;
-  textColor?: string;
-} {
-  // Priority markers (p1-p9)
-  const priorityMatch = markerId.match(/^p(\d)$/);
-  if (priorityMatch && priorityMatch[1]) {
-    const colors: Record<string, string> = {
-      '1': '#ef4444', '2': '#f97316', '3': '#eab308', '4': '#22c55e',
-      '5': '#3b82f6', '6': '#8b5cf6', '7': '#64748b', '8': '#374151', '9': '#78716c'
-    };
-    const num = priorityMatch[1];
-    return { type: 'badge', label: num, bg: colors[num] || '#3b82f6', textColor: 'white' };
-  }
-
-  // Month markers
-  const monthMatch = markerId.match(/^month-(\d+)$/);
-  if (monthMatch && monthMatch[1]) {
-    return { type: 'badge', label: monthMatch[1], bg: '#e5e7eb', textColor: '#374151' };
-  }
-
-  // Face emojis (expanded)
-  const faceEmojis: Record<string, string> = {
-    'face-happy': '😊', 'face-sad': '😢', 'face-angry': '😠', 'face-surprised': '😮',
-    'face-laugh': '😄', 'face-love': '😍', 'face-think': '🤔', 'face-cool': '😎',
-    'face-wink': '😉', 'face-cry': '😭', 'face-sweat': '😅', 'face-sleeping': '😴',
-    'face-sick': '🤢', 'face-mind-blown': '🤯', 'face-party': '🥳', 'face-nerd': '🤓'
-  };
-  if (faceEmojis[markerId]) {
-    return { type: 'emoji', emoji: faceEmojis[markerId] };
-  }
-
-  // Gesture emojis
-  const gestureEmojis: Record<string, string> = {
-    'gest-thumbsup': '👍', 'gest-thumbsdown': '👎', 'gest-clap': '👏', 'gest-wave': '👋',
-    'gest-ok': '👌', 'gest-point': '👉', 'gest-fist': '✊', 'gest-raised': '✋',
-    'gest-muscle': '💪', 'gest-pray': '🙏', 'gest-writing': '✍️', 'gest-eyes': '👀'
-  };
-  if (gestureEmojis[markerId]) {
-    return { type: 'emoji', emoji: gestureEmojis[markerId] };
-  }
-
-  // Object emojis
-  const objectEmojis: Record<string, string> = {
-    'obj-lightbulb': '💡', 'obj-fire': '🔥', 'obj-star': '⭐', 'obj-heart': '❤️',
-    'obj-rocket': '🚀', 'obj-target': '🎯', 'obj-trophy': '🏆', 'obj-medal': '🥇',
-    'obj-gem': '💎', 'obj-bolt': '⚡', 'obj-magnet': '🧲', 'obj-gear': '⚙️',
-    'obj-wrench': '🔧', 'obj-key': '🔑', 'obj-lock': '🔒', 'obj-bell': '🔔'
-  };
-  if (objectEmojis[markerId]) {
-    return { type: 'emoji', emoji: objectEmojis[markerId] };
-  }
-
-  // Nature emojis
-  const natureEmojis: Record<string, string> = {
-    'nat-sun': '☀️', 'nat-moon': '🌙', 'nat-cloud': '☁️', 'nat-rain': '🌧️',
-    'nat-snow': '❄️', 'nat-rainbow': '🌈', 'nat-tree': '🌳', 'nat-flower': '🌸',
-    'nat-leaf': '🍃', 'nat-seedling': '🌱', 'nat-earth': '🌍', 'nat-mountain': '⛰️'
-  };
-  if (natureEmojis[markerId]) {
-    return { type: 'emoji', emoji: natureEmojis[markerId] };
-  }
-
-  // Tech emojis
-  const techEmojis: Record<string, string> = {
-    'tech-laptop': '💻', 'tech-phone': '📱', 'tech-email': '📧', 'tech-folder': '📁',
-    'tech-chart': '📊', 'tech-calendar': '📅', 'tech-clipboard': '📋', 'tech-pencil': '✏️',
-    'tech-book': '📚', 'tech-money': '💰', 'tech-briefcase': '💼', 'tech-clock': '⏰'
-  };
-  if (techEmojis[markerId]) {
-    return { type: 'emoji', emoji: techEmojis[markerId] };
-  }
-
-  // Progress markers
-  const progressIcons: Record<string, { icon: string; color: string }> = {
-    'prog-0': { icon: '○', color: '#94a3b8' },
-    'prog-25': { icon: '◔', color: '#f59e0b' },
-    'prog-50': { icon: '◑', color: '#f59e0b' },
-    'prog-75': { icon: '◕', color: '#22c55e' },
-    'prog-100': { icon: '●', color: '#22c55e' },
-    'prog-start': { icon: '▶', color: '#3b82f6' },
-    'prog-pause': { icon: '⏸', color: '#f97316' },
-    'prog-cancel': { icon: '✕', color: '#ef4444' }
-  };
-  if (progressIcons[markerId]) {
-    return { type: 'icon', ...progressIcons[markerId] };
-  }
-
-  // Flag markers
-  if (markerId.startsWith('flag-')) {
-    const flagColors: Record<string, string> = {
-      'flag-red': '#ef4444', 'flag-orange': '#f97316', 'flag-yellow': '#eab308',
-      'flag-green': '#22c55e', 'flag-blue': '#3b82f6', 'flag-purple': '#8b5cf6', 'flag-gray': '#64748b'
-    };
-    return { type: 'icon', icon: '⚑', color: flagColors[markerId] || defaultColor };
-  }
-
-  // Star markers
-  if (markerId.startsWith('star-')) {
-    const starColors: Record<string, string> = {
-      'star-red': '#ef4444', 'star-orange': '#f97316', 'star-yellow': '#eab308',
-      'star-green': '#22c55e', 'star-blue': '#3b82f6', 'star-purple': '#8b5cf6'
-    };
-    return { type: 'icon', icon: '★', color: starColors[markerId] || defaultColor };
-  }
-
-  // Person markers
-  if (markerId.startsWith('person-')) {
-    const personColors: Record<string, string> = {
-      'person-red': '#ef4444', 'person-orange': '#f97316', 'person-yellow': '#eab308',
-      'person-green': '#22c55e', 'person-blue': '#3b82f6', 'person-purple': '#8b5cf6'
-    };
-    return { type: 'icon', icon: '👤', color: personColors[markerId] || defaultColor };
-  }
-
-  // Arrow markers
-  const arrowIcons: Record<string, { icon: string; color: string }> = {
-    'arrow-up': { icon: '↑', color: '#22c55e' },
-    'arrow-up-right': { icon: '↗', color: '#22c55e' },
-    'arrow-right': { icon: '→', color: '#3b82f6' },
-    'arrow-down-right': { icon: '↘', color: '#f97316' },
-    'arrow-down': { icon: '↓', color: '#ef4444' },
-    'arrow-down-left': { icon: '↙', color: '#ef4444' },
-    'arrow-left': { icon: '←', color: '#64748b' },
-    'arrow-up-left': { icon: '↖', color: '#22c55e' },
-    'arrow-refresh': { icon: '↻', color: '#3b82f6' }
-  };
-  if (arrowIcons[markerId]) {
-    return { type: 'icon', ...arrowIcons[markerId] };
-  }
-
-  // Symbol markers
-  const symbolIcons: Record<string, { icon: string; bg: string }> = {
-    'sym-plus': { icon: '+', bg: '#22c55e' },
-    'sym-minus': { icon: '−', bg: '#ef4444' },
-    'sym-question': { icon: '?', bg: '#3b82f6' },
-    'sym-info': { icon: 'i', bg: '#3b82f6' },
-    'sym-warning': { icon: '!', bg: '#f59e0b' },
-    'sym-error': { icon: '✕', bg: '#ef4444' },
-    'sym-check': { icon: '✓', bg: '#22c55e' },
-    'sym-stop': { icon: '⏹', bg: '#ef4444' }
-  };
-  if (symbolIcons[markerId]) {
-    return { type: 'icon', ...symbolIcons[markerId] };
-  }
-
-  // Default fallback
-  return { type: 'circle', color: defaultColor };
-}
 
 // ============================================
 // Draw Floating Clipart
@@ -1986,154 +1825,8 @@ function handleKeyDown(e: KeyboardEvent) {
 // Utility Functions
 // ============================================
 
-function getMousePosition(e: MouseEvent): Position {
-  const canvas = canvasRef.value;
-  if (!canvas) return { x: 0, y: 0 };
-
-  const rect = canvas.getBoundingClientRect();
-
-  // Use CSS dimensions (canvasWidth/canvasHeight), not the scaled canvas.width/height
-  const cssWidth = canvasWidth.value;
-  const cssHeight = canvasHeight.value;
-
-  const x = (e.clientX - rect.left - cssWidth / 2) / store.viewState.zoom
-    + cssWidth / 2 - store.viewState.panX;
-  const y = (e.clientY - rect.top - cssHeight / 2) / store.viewState.zoom
-    + cssHeight / 2 - store.viewState.panY;
-
-  return { x, y };
-}
-
-function findNodeAtPosition(pos: Position): RenderedNode | null {
-  // Check in reverse order (top-most first)
-  const nodes = [...allNodes.value].reverse();
-
-  for (const node of nodes) {
-    if (
-      pos.x >= node.x && pos.x <= node.x + node.width &&
-      pos.y >= node.y && pos.y <= node.y + node.height
-    ) {
-      return node;
-    }
-  }
-
-  return null;
-}
-
-// Find if a position is near a relationship line (for selection)
-function findRelationshipAtPosition(pos: Position): string | null {
-  for (const rel of store.relationships) {
-    const sourceNode = renderedRoot.value
-      ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
-      : null;
-    const targetNode = renderedRoot.value
-      ? findRenderedNodeById(renderedRoot.value, rel.targetId)
-      : null;
-
-    if (!sourceNode || !targetNode) continue;
-
-    const startX = sourceNode.x + sourceNode.width / 2;
-    const startY = sourceNode.y + sourceNode.height / 2;
-    const endX = targetNode.x + targetNode.width / 2;
-    const endY = targetNode.y + targetNode.height / 2;
-
-    const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
-
-    // Check if point is near the Bezier curve
-    if (isPointNearBezier(pos, { x: startX, y: startY }, cp1, cp2, { x: endX, y: endY }, 10)) {
-      return rel.id;
-    }
-  }
-  return null;
-}
-
-// Check if a point is near a cubic Bezier curve
-function isPointNearBezier(
-  point: Position,
-  p0: Position,
-  p1: Position,
-  p2: Position,
-  p3: Position,
-  threshold: number
-): boolean {
-  // Sample the curve and check distance to each segment
-  const samples = 20;
-  for (let i = 0; i < samples; i++) {
-    const t = i / samples;
-    const x = Math.pow(1-t, 3) * p0.x + 3 * Math.pow(1-t, 2) * t * p1.x + 3 * (1-t) * Math.pow(t, 2) * p2.x + Math.pow(t, 3) * p3.x;
-    const y = Math.pow(1-t, 3) * p0.y + 3 * Math.pow(1-t, 2) * t * p1.y + 3 * (1-t) * Math.pow(t, 2) * p2.y + Math.pow(t, 3) * p3.y;
-
-    const dist = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
-    if (dist < threshold) return true;
-  }
-  return false;
-}
-
-// Find if a position is on a control point handle
-function findControlPointAtPosition(pos: Position): { relId: string; point: 1 | 2 } | null {
-  // Only check the selected relationship
-  if (!selectedRelationshipId.value) return null;
-
-  const rel = store.relationships.find(r => r.id === selectedRelationshipId.value);
-  if (!rel) return null;
-
-  const sourceNode = renderedRoot.value
-    ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
-    : null;
-  const targetNode = renderedRoot.value
-    ? findRenderedNodeById(renderedRoot.value, rel.targetId)
-    : null;
-
-  if (!sourceNode || !targetNode) return null;
-
-  const startX = sourceNode.x + sourceNode.width / 2;
-  const startY = sourceNode.y + sourceNode.height / 2;
-  const endX = targetNode.x + targetNode.width / 2;
-  const endY = targetNode.y + targetNode.height / 2;
-
-  const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
-
-  // Check control point 1
-  const dist1 = Math.sqrt(Math.pow(pos.x - cp1.x, 2) + Math.pow(pos.y - cp1.y, 2));
-  if (dist1 <= controlPointRadius + 4) {
-    return { relId: rel.id, point: 1 };
-  }
-
-  // Check control point 2
-  const dist2 = Math.sqrt(Math.pow(pos.x - cp2.x, 2) + Math.pow(pos.y - cp2.y, 2));
-  if (dist2 <= controlPointRadius + 4) {
-    return { relId: rel.id, point: 2 };
-  }
-
-  return null;
-}
-
-// Find if a position is on a relationship label
-function findRelationshipLabelAtPosition(pos: Position): string | null {
-  for (const [relId, labelPos] of relationshipLabelPositions) {
-    const rel = store.relationships.find(r => r.id === relId);
-    if (!rel) continue;
-
-    // Get label dimensions
-    const labelText = rel.label || (selectedRelationshipId.value === relId ? 'Double-click to add label' : '');
-    if (!labelText) continue;
-
-    const padding = 6;
-    const estimatedWidth = labelText.length * 7 + padding * 2; // Rough estimate
-    const labelHeight = 20;
-
-    // Check if click is within label bounds
-    if (
-      pos.x >= labelPos.x - estimatedWidth / 2 &&
-      pos.x <= labelPos.x + estimatedWidth / 2 &&
-      pos.y >= labelPos.y - labelHeight / 2 - 2 &&
-      pos.y <= labelPos.y + labelHeight / 2 - 2
-    ) {
-      return relId;
-    }
-  }
-  return null;
-}
+// Alias screenToWorld for backward compatibility
+const getMousePosition = screenToWorld;
 
 function resizeCanvas() {
   if (!containerRef.value || !canvasRef.value) return;
