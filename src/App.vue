@@ -10,6 +10,15 @@ const store = useMindMapStore();
 const showSidebar = ref(true);
 const sidebarTab = ref<'format' | 'markers' | 'outline'>('format');
 
+const layouts = [
+  { id: 'mindmap', name: 'Mind Map', short: 'Mind', icon: '🧠' },
+  { id: 'orgchart', name: 'Org Chart', short: 'Org', icon: '🏢' },
+  { id: 'tree', name: 'Tree Chart', short: 'Tree', icon: '🌳' },
+  { id: 'logic', name: 'Logic Chart', short: 'Logic', icon: '➡️' },
+  { id: 'fishbone', name: 'Fishbone (Ishikawa)', short: 'Fish', icon: '🐟' },
+  { id: 'timeline', name: 'Timeline', short: 'Time', icon: '📅' },
+];
+
 onMounted(() => {
   // Initialize with a sample mind map
   store.newMap('My Mind Map');
@@ -79,19 +88,22 @@ onMounted(() => {
         </div>
 
         <!-- Structure selector -->
-        <div class="absolute top-4 left-4 bg-white dark:bg-slate-800 rounded-lg shadow-lg p-2">
-          <select
-            :value="store.structure"
-            @change="store.setStructure(($event.target as HTMLSelectElement).value as any)"
-            class="text-sm bg-transparent border-none focus:ring-0 cursor-pointer"
+        <div class="absolute top-4 left-4 bg-white dark:bg-slate-800 rounded-lg shadow-lg p-1 flex gap-1">
+          <button
+            v-for="layout in layouts"
+            :key="layout.id"
+            :title="layout.name"
+            :class="[
+              'p-2 rounded-md transition-all text-xs font-medium flex flex-col items-center gap-1 min-w-[60px]',
+              store.structure === layout.id
+                ? 'bg-blue-500 text-white shadow-md'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400'
+            ]"
+            @click="store.setStructure(layout.id as any)"
           >
-            <option value="mindmap">Mind Map</option>
-            <option value="orgchart">Org Chart</option>
-            <option value="tree">Tree Chart</option>
-            <option value="logic">Logic Chart</option>
-            <option value="fishbone">Fishbone</option>
-            <option value="timeline">Timeline</option>
-          </select>
+            <span class="text-lg">{{ layout.icon }}</span>
+            <span class="text-[10px] leading-none">{{ layout.short }}</span>
+          </button>
         </div>
       </div>
 
