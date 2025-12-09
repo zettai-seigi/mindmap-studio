@@ -1100,6 +1100,7 @@ const headerTitle = computed(() => {
 .sidebar-container {
   display: flex;
   height: 100%;
+  background: rgba(30, 30, 30, 0.98);
 }
 
 .sidebar-panel {

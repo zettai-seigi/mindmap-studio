@@ -100,6 +100,10 @@ function handleResetLayout() {
   store.clearAllPositions();
 }
 
+function handleToggleSidebar() {
+  emit('toggle-sidebar');
+}
+
 // Save functions
 async function saveAsJSON() {
   console.log('saveAsJSON called');
@@ -299,7 +303,7 @@ async function openXMind() {
       <button
         class="toolbar-btn"
         title="Toggle Sidebar"
-        @click="emit('toggle-sidebar')"
+        @click="handleToggleSidebar"
       >
         <PanelRight :size="16" />
       </button>
@@ -313,6 +317,8 @@ async function openXMind() {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+  z-index: 100;
 }
 
 .divider {

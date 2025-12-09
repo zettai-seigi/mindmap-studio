@@ -4,7 +4,6 @@ import { useMindMapStore } from '../stores/mindmap';
 import { layoutNodes, getAllRenderedNodes, findRenderedNodeById } from '../layouts';
 import type { RenderedNode, Position } from '../types';
 import ContextMenu from './ContextMenu.vue';
-import Minimap from './Minimap.vue';
 
 const store = useMindMapStore();
 
@@ -1047,10 +1046,12 @@ function handleDrop(e: DragEvent) {
   }
 }
 
-function handleMinimapNavigate(panX: number, panY: number) {
-  store.setPan(panX, panY);
-  render();
-}
+// Expose canvas dimensions and render function for parent components
+defineExpose({
+  canvasWidth,
+  canvasHeight,
+  render,
+});
 
 function finishEditing() {
   if (editingNode.value) {
@@ -1275,6 +1276,12 @@ function resizeCanvas() {
 // Lifecycle
 // ============================================
 
+// ResizeObserver for container size changes
+let resizeObserver: ResizeObserver | null = null;
+let resizeTimeout: number | null = null;
+let lastWidth = 0;
+let lastHeight = 0;
+
 onMounted(() => {
   if (canvasRef.value) {
     ctx.value = canvasRef.value.getContext('2d');
@@ -1284,6 +1291,35 @@ onMounted(() => {
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', handleKeyDown);
 
+  // Use ResizeObserver to detect container size changes (e.g., sidebar toggle)
+  // Debounced to avoid rapid re-renders
+  if (containerRef.value) {
+    lastWidth = containerRef.value.clientWidth;
+    lastHeight = containerRef.value.clientHeight;
+
+    resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const newWidth = entry.contentRect.width;
+      const newHeight = entry.contentRect.height;
+
+      // Only resize if dimensions actually changed significantly
+      if (Math.abs(newWidth - lastWidth) > 1 || Math.abs(newHeight - lastHeight) > 1) {
+        lastWidth = newWidth;
+        lastHeight = newHeight;
+
+        if (resizeTimeout) {
+          clearTimeout(resizeTimeout);
+        }
+        resizeTimeout = window.setTimeout(() => {
+          resizeCanvas();
+        }, 100);
+      }
+    });
+    resizeObserver.observe(containerRef.value);
+  }
+
   store.init();
   updateLayout();
   render();
@@ -1292,6 +1328,14 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', resizeCanvas);
   window.removeEventListener('keydown', handleKeyDown);
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+  if (resizeTimeout) {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = null;
+  }
 });
 
 // Watch for store changes - watch currentMap for undo/redo support
@@ -1320,6 +1364,28 @@ watch(
     render();
   },
   { deep: true }
+);
+
+// Watch viewState for zoom/pan changes (triggered from footer controls)
+watch(
+  () => store.viewState.zoom,
+  () => {
+    render();
+  }
+);
+
+watch(
+  () => store.viewState.panX,
+  () => {
+    render();
+  }
+);
+
+watch(
+  () => store.viewState.panY,
+  () => {
+    render();
+  }
 );
 </script>
 
@@ -1383,12 +1449,5 @@ watch(
         Cancel (Esc)
       </button>
     </div>
-
-    <!-- Minimap -->
-    <Minimap
-      :canvas-width="canvasWidth"
-      :canvas-height="canvasHeight"
-      @navigate="handleMinimapNavigate"
-    />
   </div>
 </template>

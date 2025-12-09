@@ -65,6 +65,11 @@ A modern, feature-rich mind mapping application built with Vue 3, TypeScript, an
 - **Undo/Redo** - Full history support with keyboard shortcuts
 - **Reset Layout** - Auto-arrange nodes to default positions
 - **Zoom Controls** - Zoom in/out with fit-to-view option
+- **Minimap Navigator** - Interactive thumbnail overview with:
+  - Draggable viewport for quick navigation
+  - Toggle visibility (eye icon)
+  - Real-time sync with main canvas
+- **Smooth Animations** - Elegant sidebar slide transitions
 
 ## Installation
 
