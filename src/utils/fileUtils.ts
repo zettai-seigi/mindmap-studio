@@ -134,7 +134,7 @@ function xmindTopicToNode(topic: XMindTopic, isFloating: boolean = false, isRoot
     };
   }
 
-  // Map XMind structureClass to our structure type
+  // Map XMind structureClass to our structure type and direction
   if (topic.structureClass) {
     const structureMap: Record<string, StructureType> = {
       'org.xmind.ui.fishbone.rightHeaded': 'fishbone',
@@ -158,6 +158,14 @@ function xmindTopicToNode(topic: XMindTopic, isFloating: boolean = false, isRoot
     const mappedStructure = structureMap[topic.structureClass];
     if (mappedStructure) {
       node.structure = mappedStructure;
+    }
+
+    // Extract direction from structureClass for structures that have it
+    // rightHeaded/right = children go left, leftHeaded/left = children go right
+    if (topic.structureClass.includes('rightHeaded') || topic.structureClass.includes('.right')) {
+      node.direction = 'right';  // Head on right, children extend left
+    } else if (topic.structureClass.includes('leftHeaded') || topic.structureClass.includes('.left')) {
+      node.direction = 'left';   // Head on left, children extend right
     }
   }
 

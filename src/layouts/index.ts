@@ -203,9 +203,10 @@ function layoutChildrenTimeline(
   });
 }
 
-// Fishbone layout: proper fishbone with spine and diagonal ribs
-// Parent node is the "head", children extend along a horizontal spine
-// with sub-branches going diagonally up/down
+// Fishbone (Ishikawa) layout: diagonal ribs branching from a horizontal spine
+// XMind style: rightHeaded = head on right, spine goes left
+//              leftHeaded = head on left, spine goes right
+// Main branches alternate above/below the spine at ~45° angles
 function layoutChildrenFishbone(
   parentRendered: RenderedNode,
   node: MindMapNode,
@@ -214,28 +215,36 @@ function layoutChildrenFishbone(
   cfg: LayoutConfig,
   inheritedStructure?: StructureType
 ): void {
-  const SPINE_SPACING = 120;   // Spacing along the horizontal spine
-  const BRANCH_OFFSET = 80;    // Vertical offset for main branches
-  const SUB_BRANCH_X = 40;     // Horizontal offset for sub-branches
-  const SUB_BRANCH_Y = 35;     // Vertical spacing for sub-branches
+  // Fishbone spacing constants
+  const RIB_HORIZONTAL = 100;  // Horizontal distance between ribs along spine
+  const RIB_VERTICAL = 70;     // Vertical offset from spine (creates ~45° angle)
+  const SUB_RIB_H = 50;        // Sub-rib horizontal spacing
+  const SUB_RIB_V = 40;        // Sub-rib vertical spacing
 
-  const parentCenterX = parentRendered.x + parentRendered.width / 2;
-  const parentCenterY = parentRendered.y + parentRendered.height / 2;
+  const headX = parentRendered.x + parentRendered.width / 2;
+  const headY = parentRendered.y + parentRendered.height / 2;
 
-  // Direction: fishbone extends opposite to the direction (left means spine goes right)
-  const xDir = (direction === 'left') ? 1 : -1;
+  // Use node's explicit direction if set (from XMind import), otherwise use passed direction
+  // rightHeaded (direction='right'): spine goes LEFT (xDir=-1)
+  // leftHeaded (direction='left'): spine goes RIGHT (xDir=1)
+  const nodeDirection = node.direction || direction;
+  const xDir = (nodeDirection === 'left') ? 1 : -1;
 
   node.children.forEach((child, index) => {
+    // Alternate above (even) and below (odd) the spine
     const isAbove = index % 2 === 0;
-    // Position along the spine (horizontal)
-    const xPos = parentCenterX + xDir * (index + 1) * SPINE_SPACING;
-    // Vertical offset (alternating above/below)
-    const yPos = parentCenterY + (isAbove ? -BRANCH_OFFSET : BRANCH_OFFSET);
+    const yDir = isAbove ? -1 : 1;
+
+    // Position along spine - ribs are evenly spaced horizontally
+    // Each rib is placed diagonally from a point on the spine
+    const spineX = headX + xDir * (index + 1) * RIB_HORIZONTAL;
+    const ribX = spineX + xDir * RIB_HORIZONTAL * 0.3;  // Slight diagonal offset
+    const ribY = headY + yDir * RIB_VERTICAL;
 
     const childRendered: RenderedNode = {
       node: child,
-      x: child.position?.x ?? (xPos - cfg.nodeWidth / 2),
-      y: child.position?.y ?? (yPos - cfg.nodeHeight / 2),
+      x: child.position?.x ?? (ribX - cfg.nodeWidth / 2),
+      y: child.position?.y ?? (ribY - cfg.nodeHeight / 2),
       width: cfg.nodeWidth,
       height: cfg.nodeHeight,
       collapsed: child.collapsed || false,
@@ -244,12 +253,11 @@ function layoutChildrenFishbone(
       children: [],
     };
 
-    // Layout sub-branches (grandchildren) as diagonal ribs
+    // Layout sub-ribs (grandchildren) continuing diagonally
     if (!child.collapsed && child.children.length > 0) {
       const childEffectiveStructure = child.structure || inheritedStructure;
       if (childEffectiveStructure === 'fishbone') {
-        const subDir = isAbove ? -1 : 1;
-        layoutFishboneSubBranches(childRendered, child, level + 1, cfg, childEffectiveStructure, xDir, subDir, SUB_BRANCH_X, SUB_BRANCH_Y);
+        layoutFishboneSubRibs(childRendered, child, level + 1, cfg, childEffectiveStructure, xDir, yDir, SUB_RIB_H, SUB_RIB_V);
       } else {
         layoutChildren(childRendered, child, direction, level + 1, cfg, childEffectiveStructure);
       }
@@ -259,8 +267,8 @@ function layoutChildrenFishbone(
   });
 }
 
-// Sub-branches for fishbone: diagonal ribs extending from main branches
-function layoutFishboneSubBranches(
+// Sub-ribs for fishbone: continue diagonal pattern from main ribs
+function layoutFishboneSubRibs(
   parentRendered: RenderedNode,
   node: MindMapNode,
   level: number,
@@ -268,22 +276,23 @@ function layoutFishboneSubBranches(
   inheritedStructure: StructureType,
   xDir: number,
   yDir: number,
-  subBranchX: number,
-  subBranchY: number
+  subH: number,
+  subV: number
 ): void {
-  const parentX = parentRendered.x + parentRendered.width / 2;
-  const parentY = parentRendered.y + parentRendered.height / 2;
+  const startX = parentRendered.x + parentRendered.width / 2;
+  const startY = parentRendered.y + parentRendered.height / 2;
 
   node.children.forEach((child, index) => {
     const childEffectiveStructure = child.structure || inheritedStructure;
-    // Diagonal positioning: move along spine direction and vertically
-    const subX = parentX + xDir * (index + 1) * subBranchX - cfg.nodeWidth * 0.425;
-    const subY = parentY + yDir * (index + 1) * subBranchY - cfg.nodeHeight * 0.425;
+
+    // Continue diagonally in same direction as parent rib
+    const subX = startX + xDir * (index + 1) * subH;
+    const subY = startY + yDir * (index + 1) * subV;
 
     const subRendered: RenderedNode = {
       node: child,
-      x: child.position?.x ?? subX,
-      y: child.position?.y ?? subY,
+      x: child.position?.x ?? (subX - cfg.nodeWidth * 0.425),
+      y: child.position?.y ?? (subY - cfg.nodeHeight * 0.425),
       width: cfg.nodeWidth * 0.85,
       height: cfg.nodeHeight * 0.85,
       collapsed: child.collapsed || false,
@@ -292,11 +301,10 @@ function layoutFishboneSubBranches(
       children: [],
     };
 
-    // Continue fishbone pattern for deeper levels
+    // Continue pattern for deeper levels with smaller spacing
     if (!child.collapsed && child.children.length > 0) {
       if (childEffectiveStructure === 'fishbone') {
-        // Smaller spacing for deeper levels
-        layoutFishboneSubBranches(subRendered, child, level + 1, cfg, childEffectiveStructure, xDir, yDir, subBranchX * 0.8, subBranchY * 0.8);
+        layoutFishboneSubRibs(subRendered, child, level + 1, cfg, childEffectiveStructure, xDir, yDir, subH * 0.75, subV * 0.75);
       } else {
         const dir: LayoutDirection = xDir > 0 ? 'right' : 'left';
         layoutChildren(subRendered, child, dir, level + 1, cfg, childEffectiveStructure);
