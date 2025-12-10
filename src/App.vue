@@ -6,8 +6,9 @@ import Sidebar from './components/Sidebar.vue';
 import Minimap from './components/Minimap.vue';
 import OutlineView from './components/OutlineView.vue';
 import SearchPanel from './components/SearchPanel.vue';
+import ExportDialog from './components/ExportDialog.vue';
 import { useMindMapStore } from './stores/mindmap';
-import { Eye, EyeOff, Minus, Plus, Equal, SlidersHorizontal, Map, List, Focus, Search } from 'lucide-vue-next';
+import { Eye, EyeOff, Minus, Plus, Equal, SlidersHorizontal, Map, List, Focus, Search, Maximize } from 'lucide-vue-next';
 
 const store = useMindMapStore();
 
@@ -22,11 +23,56 @@ function closeSearch() {
   showSearch.value = false;
 }
 
-// Global keyboard handler for Cmd+F
+// Sidebar tab selection (for keyboard shortcuts)
+const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
+
+// Sidebar tab names for keyboard shortcuts (Ctrl/Cmd + 1-6)
+const sidebarTabs = ['themes', 'outline', 'markers', 'tags', 'style', 'relationships'] as const;
+
+// Global keyboard handler for Cmd+F and panel shortcuts
 function handleGlobalKeyDown(e: KeyboardEvent) {
+  // Cmd+F for search
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
     e.preventDefault();
     toggleSearch();
+    return;
+  }
+
+  // Cmd+V for paste from clipboard (create new map)
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'v') {
+    e.preventDefault();
+    handlePasteAsNewMap();
+    return;
+  }
+
+  // Ctrl/Cmd + 1-6 for sidebar panels
+  if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '6') {
+    e.preventDefault();
+    const index = parseInt(e.key) - 1;
+    const tabId = sidebarTabs[index];
+    if (tabId) {
+      // Ensure sidebar is visible
+      if (!showSidebar.value) {
+        showSidebar.value = true;
+      }
+      // Set the active tab via the sidebar component
+      if (sidebarRef.value) {
+        sidebarRef.value.setActiveTab(tabId);
+      }
+    }
+    return;
+  }
+}
+
+// Handle paste as new map from clipboard
+async function handlePasteAsNewMap() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text.trim()) {
+      store.importFromClipboardText(text);
+    }
+  } catch (error) {
+    console.error('Failed to read clipboard:', error);
   }
 }
 
@@ -78,8 +124,23 @@ function resetZoom() {
   store.setPan(0, 0);
 }
 
+function fitToView() {
+  canvasRef.value?.fitToView();
+}
+
 function openFilter() {
   // TODO: Implement filter functionality
+}
+
+// Export dialog
+const showExportDialog = ref(false);
+
+function openExportDialog() {
+  showExportDialog.value = true;
+}
+
+function closeExportDialog() {
+  showExportDialog.value = false;
 }
 
 function handleMinimapNavigate(panX: number, panY: number) {
@@ -97,29 +158,34 @@ onMounted(() => {
   // Add global keyboard listener for search
   window.addEventListener('keydown', handleGlobalKeyDown);
 
-  // Initialize with a sample mind map
-  store.newMap('My Mind Map');
+  // Try to load saved mind map from localStorage
+  const loaded = store.loadFromLocalStorage();
 
-  // Add some sample children
-  const child1 = store.addChild(store.root.id, 'Main Idea 1');
-  const child2 = store.addChild(store.root.id, 'Main Idea 2');
-  const child3 = store.addChild(store.root.id, 'Main Idea 3');
+  if (!loaded) {
+    // No saved data - create a sample mind map for first-time users
+    store.newMap('My Mind Map');
 
-  if (child1) {
-    store.addChild(child1.id, 'Sub-topic 1.1');
-    store.addChild(child1.id, 'Sub-topic 1.2');
-  }
+    // Add some sample children
+    const child1 = store.addChild(store.root.id, 'Main Idea 1');
+    const child2 = store.addChild(store.root.id, 'Main Idea 2');
+    const child3 = store.addChild(store.root.id, 'Main Idea 3');
 
-  if (child2) {
-    store.addChild(child2.id, 'Sub-topic 2.1');
-    const sub22 = store.addChild(child2.id, 'Sub-topic 2.2');
-    if (sub22) {
-      store.addChild(sub22.id, 'Detail 2.2.1');
+    if (child1) {
+      store.addChild(child1.id, 'Sub-topic 1.1');
+      store.addChild(child1.id, 'Sub-topic 1.2');
     }
-  }
 
-  if (child3) {
-    store.addChild(child3.id, 'Sub-topic 3.1');
+    if (child2) {
+      store.addChild(child2.id, 'Sub-topic 2.1');
+      const sub22 = store.addChild(child2.id, 'Sub-topic 2.2');
+      if (sub22) {
+        store.addChild(sub22.id, 'Detail 2.2.1');
+      }
+    }
+
+    if (child3) {
+      store.addChild(child3.id, 'Sub-topic 3.1');
+    }
   }
 });
 
@@ -129,9 +195,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-screen w-screen flex flex-col bg-slate-800 overflow-hidden">
+  <div class="h-screen w-screen flex flex-col overflow-hidden" style="background: var(--bg-canvas);">
     <!-- Toolbar -->
-    <Toolbar :canvas-ref="canvasRef?.canvasRef" @toggle-sidebar="toggleSidebar" />
+    <Toolbar :canvas-ref="canvasRef?.canvasRef" @toggle-sidebar="toggleSidebar" @open-export-dialog="openExportDialog" />
 
     <!-- Main content -->
     <div class="main-content">
@@ -156,7 +222,7 @@ onUnmounted(() => {
       <!-- Sidebar (overlays canvas) -->
       <Transition name="sidebar-slide">
         <div v-if="showSidebar" class="sidebar-wrapper">
-          <Sidebar @filter-change="handleTagFilterChange" />
+          <Sidebar ref="sidebarRef" @filter-change="handleTagFilterChange" />
         </div>
       </Transition>
 
@@ -253,6 +319,11 @@ onUnmounted(() => {
           <Equal :size="12" />
         </button>
 
+        <!-- Fit to View -->
+        <button v-if="viewMode === 'mindmap'" class="footer-btn" title="Fit All to View" @click="fitToView">
+          <Maximize :size="14" />
+        </button>
+
         <div v-if="viewMode === 'mindmap'" class="footer-divider" />
 
         <!-- Search -->
@@ -266,6 +337,13 @@ onUnmounted(() => {
         </button>
       </div>
     </div>
+
+    <!-- Export Dialog -->
+    <ExportDialog
+      :visible="showExportDialog"
+      :canvas-ref="canvasRef"
+      @close="closeExportDialog"
+    />
   </div>
 </template>
 
@@ -275,10 +353,10 @@ onUnmounted(() => {
   height: 32px;
   display: flex;
   align-items: center;
-  background: rgba(40, 40, 40, 0.95);
+  background: var(--bg-toolbar);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--border-primary);
   padding: 0 8px;
 }
 
@@ -293,7 +371,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-secondary);
   border-radius: 4px;
   margin-right: 12px;
 }
@@ -301,7 +379,7 @@ onUnmounted(() => {
 .map-tab-name {
   font-size: 12px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -317,16 +395,17 @@ onUnmounted(() => {
 }
 
 .status-item {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
 }
 
 .status-dot {
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--text-muted);
+  opacity: 0.5;
   margin: 0 8px;
 }
 
 .status-hint {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -348,17 +427,17 @@ onUnmounted(() => {
   width: 26px;
   height: 26px;
   border-radius: 5px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   transition: all 0.15s ease;
 }
 
 .footer-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .footer-btn:active {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-secondary);
 }
 
 .footer-btn.active {
@@ -368,7 +447,7 @@ onUnmounted(() => {
 .footer-divider {
   width: 1px;
   height: 16px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--border-primary);
   margin: 0 6px;
 }
 
@@ -377,7 +456,7 @@ onUnmounted(() => {
   text-align: center;
   font-size: 11px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   padding: 0 4px;
 }
 
@@ -406,7 +485,7 @@ onUnmounted(() => {
 /* View mode toggle */
 .view-toggle {
   display: flex;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
   border-radius: 5px;
   padding: 2px;
 }
@@ -418,16 +497,16 @@ onUnmounted(() => {
   width: 26px;
   height: 22px;
   border-radius: 3px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   transition: all 0.15s ease;
 }
 
 .view-btn:hover {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
 }
 
 .view-btn.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   color: #60a5fa;
 }
 
@@ -465,6 +544,14 @@ onUnmounted(() => {
   padding-top: 80px;
   background: rgba(0, 0, 0, 0.4);
   z-index: 20;
+}
+
+.dark .search-wrapper {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+:not(.dark) .search-wrapper {
+  background: rgba(0, 0, 0, 0.2);
 }
 
 /* Search fade transition */

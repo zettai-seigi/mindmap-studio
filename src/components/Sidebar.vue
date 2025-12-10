@@ -4,6 +4,9 @@ import { useMindMapStore } from '../stores/mindmap';
 import { ChevronDown, ChevronRight } from 'lucide-vue-next';
 import TagsPanel from './TagsPanel.vue';
 import RelationshipsPanel from './RelationshipsPanel.vue';
+import BoundariesPanel from './BoundariesPanel.vue';
+import SummariesPanel from './SummariesPanel.vue';
+import ThemesPanel from './ThemesPanel.vue';
 
 const store = useMindMapStore();
 
@@ -13,7 +16,7 @@ const selectedNode = computed(() => {
 });
 
 // Active tab
-const activeTab = ref<'outline' | 'markers' | 'style' | 'clipart' | 'notes' | 'comments' | 'tasks' | 'tags' | 'relationships'>('style');
+const activeTab = ref<'outline' | 'markers' | 'style' | 'clipart' | 'notes' | 'comments' | 'tasks' | 'tags' | 'relationships' | 'boundaries' | 'summaries' | 'themes'>('themes');
 
 // Define emit for filter changes
 const emit = defineEmits<{
@@ -304,11 +307,14 @@ const markerCategories = [
 
 // Tab definitions with icons (matching XMind's right sidebar)
 const tabs = [
+  { id: 'themes', icon: '🎭', label: 'Themes' },
   { id: 'outline', icon: '📋', label: 'Outline' },
   { id: 'markers', icon: '🏷️', label: 'Markers' },
   { id: 'tags', icon: '🔖', label: 'Tags' },
   { id: 'style', icon: '🎨', label: 'Sheet Format' },
   { id: 'relationships', icon: '🔗', label: 'Relationships' },
+  { id: 'boundaries', icon: '⬜', label: 'Boundaries' },
+  { id: 'summaries', icon: '⌐', label: 'Summaries' },
   { id: 'clipart', icon: '🖼️', label: 'Clipart' },
   { id: 'notes', icon: '📝', label: 'Notes' },
   { id: 'comments', icon: '💬', label: 'Comments' },
@@ -599,6 +605,16 @@ function selectNode(nodeId: string) {
   store.selectNode(nodeId);
 }
 
+// Expose method to set active tab from parent (for keyboard shortcuts)
+function setActiveTab(tabId: typeof activeTab.value) {
+  activeTab.value = tabId;
+}
+
+// Expose for parent component
+defineExpose({
+  setActiveTab,
+});
+
 function resetStyle() {
   store.resetSheetFormat();
 }
@@ -652,8 +668,13 @@ const headerTitle = computed(() => {
         </div>
       </div>
 
+      <!-- Themes Content -->
+      <div v-if="activeTab === 'themes'" class="sidebar-content themes-content">
+        <ThemesPanel />
+      </div>
+
       <!-- Outline Content -->
-      <div v-if="activeTab === 'outline'" class="sidebar-content outline-content">
+      <div v-else-if="activeTab === 'outline'" class="sidebar-content outline-content">
         <div class="outline-tree">
           <template v-for="{ node, level } in outlineNodes" :key="node?.id">
             <div
@@ -922,6 +943,16 @@ const headerTitle = computed(() => {
       <!-- Relationships Content -->
       <div v-else-if="activeTab === 'relationships'" class="sidebar-content relationships-content">
         <RelationshipsPanel />
+      </div>
+
+      <!-- Boundaries Content -->
+      <div v-else-if="activeTab === 'boundaries'" class="sidebar-content boundaries-content">
+        <BoundariesPanel />
+      </div>
+
+      <!-- Summaries Content -->
+      <div v-else-if="activeTab === 'summaries'" class="sidebar-content summaries-content">
+        <SummariesPanel />
       </div>
 
       <!-- Clipart Content -->
@@ -1279,15 +1310,15 @@ const headerTitle = computed(() => {
 .sidebar-container {
   display: flex;
   height: 100%;
-  background: rgba(30, 30, 30, 0.98);
+  background: var(--bg-sidebar);
 }
 
 .sidebar-panel {
   width: 260px;
-  background: rgba(30, 30, 30, 0.98);
+  background: var(--bg-sidebar);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid var(--border-primary);
   display: flex;
   flex-direction: column;
 }
@@ -1298,14 +1329,14 @@ const headerTitle = computed(() => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--border-secondary);
 }
 
 .header-title {
   font-size: 14px;
   font-weight: 600;
-  color: #e5e5e5;
+  color: var(--text-primary);
 }
 
 .header-actions {
@@ -1321,22 +1352,22 @@ const headerTitle = computed(() => {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   font-size: 14px;
 }
 
 .header-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .header-select {
   padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   font-size: 12px;
-  color: #e5e5e5;
-  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
 }
 
 /* Content */
@@ -1375,18 +1406,18 @@ const headerTitle = computed(() => {
 
 .format-label {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-secondary);
 }
 
 .format-value {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-primary);
   min-width: 24px;
 }
 
 .format-unit {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
 }
 
 /* Color Picker */
@@ -1400,7 +1431,7 @@ const headerTitle = computed(() => {
   width: 24px;
   height: 24px;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-primary);
   cursor: pointer;
 }
 
@@ -1416,22 +1447,21 @@ const headerTitle = computed(() => {
 /* Select */
 .format-select {
   padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   font-size: 13px;
-  color: #e5e5e5;
-  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
   cursor: pointer;
 }
 
 .format-select:hover {
-  border-color: rgba(255, 255, 255, 0.25);
-  background: rgba(0, 0, 0, 0.4);
+  border-color: var(--accent-primary);
 }
 
 .format-select option {
-  background: #2d2d2d;
-  color: #e5e5e5;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 /* Slider */
@@ -1440,7 +1470,7 @@ const headerTitle = computed(() => {
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-primary);
   border-radius: 2px;
   cursor: pointer;
 }
@@ -1467,15 +1497,15 @@ const headerTitle = computed(() => {
   width: 16px;
   height: 16px;
   border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-primary);
   cursor: pointer;
   accent-color: #3b82f6;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-tertiary);
 }
 
 .checkbox-label {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
 }
 
 /* Wallpaper Icon */
@@ -1488,7 +1518,7 @@ const headerTitle = computed(() => {
 .reset-style {
   margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--border-primary);
 }
 
 .reset-link {
@@ -1522,7 +1552,7 @@ const headerTitle = computed(() => {
 }
 
 .outline-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .outline-item.selected {
@@ -1535,14 +1565,14 @@ const headerTitle = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   flex-shrink: 0;
   border-radius: 3px;
 }
 
 .outline-toggle:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .outline-toggle-placeholder {
@@ -1553,7 +1583,7 @@ const headerTitle = computed(() => {
 
 .outline-text {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1576,18 +1606,18 @@ const headerTitle = computed(() => {
 }
 
 .section-header:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .section-chevron {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .section-label {
   font-size: 13px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-primary);
 }
 
 .section-content {
@@ -1648,7 +1678,7 @@ const headerTitle = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   font-size: 13px;
   height: 100%;
 }
@@ -1670,11 +1700,11 @@ const headerTitle = computed(() => {
   padding: 10px 12px;
   text-align: left;
   transition: background-color 0.1s;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-secondary);
 }
 
 .clipart-section-header:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .clipart-section-label {
@@ -1688,7 +1718,7 @@ const headerTitle = computed(() => {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 12px;
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--border-secondary);
 }
 
 .clipart-item {
@@ -1696,15 +1726,15 @@ const headerTitle = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
   border-radius: 8px;
   cursor: grab;
   transition: all 0.15s ease;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-primary);
 }
 
 .clipart-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   border-color: rgba(59, 130, 246, 0.5);
   transform: scale(1.05);
 }
@@ -1723,7 +1753,7 @@ const headerTitle = computed(() => {
 .sidebar-tabs {
   display: flex;
   flex-direction: column;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-tertiary);
   padding: 8px 0;
   gap: 2px;
 }
@@ -1734,7 +1764,7 @@ const headerTitle = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
   border-radius: 0 6px 6px 0;
   margin-right: -1px;
   transition: all 0.15s ease;
@@ -1754,12 +1784,12 @@ const headerTitle = computed(() => {
 }
 
 .sidebar-tab:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
 }
 
 .sidebar-tab.active {
-  background: rgba(30, 30, 30, 0.98);
-  box-shadow: -2px 0 4px rgba(0, 0, 0, 0.2);
+  background: var(--bg-sidebar);
+  box-shadow: -2px 0 4px var(--shadow-sm);
 }
 
 .sidebar-tab.active::before {
@@ -1783,35 +1813,35 @@ const headerTitle = computed(() => {
   align-items: center;
   gap: 4px;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
   flex-wrap: wrap;
 }
 
 .notes-font-select {
   padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   font-size: 12px;
-  color: #e5e5e5;
-  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
   max-width: 100px;
 }
 
 .notes-size-select {
   padding: 4px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   font-size: 12px;
-  color: #e5e5e5;
-  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
   width: 48px;
 }
 
 .notes-toolbar-divider {
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-primary);
   margin: 0 4px;
 }
 
@@ -1822,14 +1852,14 @@ const headerTitle = computed(() => {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-secondary);
   font-size: 14px;
   transition: all 0.15s ease;
 }
 
 .notes-toolbar-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .notes-toolbar-btn.active {
@@ -1885,7 +1915,7 @@ const headerTitle = computed(() => {
   padding: 12px;
   border: none;
   background: transparent;
-  color: #e5e5e5;
+  color: var(--text-primary);
   font-size: 14px;
   line-height: 1.6;
   resize: none;
@@ -1893,7 +1923,7 @@ const headerTitle = computed(() => {
 }
 
 .notes-editor::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted);
 }
 
 .empty-tab-message {
@@ -1903,7 +1933,7 @@ const headerTitle = computed(() => {
   justify-content: center;
   height: 100%;
   gap: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 .empty-icon {
@@ -1924,30 +1954,30 @@ const headerTitle = computed(() => {
 
 .comments-header {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
 }
 
 .comments-topic-label {
   font-size: 12px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .comment-input-area {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .comment-input {
   width: 100%;
   padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.2);
-  color: #e5e5e5;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 13px;
   line-height: 1.5;
   resize: none;
@@ -1959,7 +1989,7 @@ const headerTitle = computed(() => {
 }
 
 .comment-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted);
 }
 
 .comment-input-actions {
@@ -1979,13 +2009,13 @@ const headerTitle = computed(() => {
 }
 
 .comment-cancel-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .comment-save-btn {
   padding: 6px 12px;
   font-size: 13px;
-  color: #60a5fa;
+  color: var(--accent-primary);
   background: transparent;
   border-radius: 4px;
   transition: all 0.15s;
@@ -1996,21 +2026,21 @@ const headerTitle = computed(() => {
 }
 
 .comment-save-btn:disabled {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
 .insert-comment-link {
   padding: 12px;
   font-size: 13px;
-  color: #60a5fa;
+  color: var(--accent-primary);
   text-align: left;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
   transition: background-color 0.15s;
 }
 
 .insert-comment-link:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .comments-list {
@@ -2021,7 +2051,7 @@ const headerTitle = computed(() => {
 
 .comment-item {
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--border-secondary);
   border-radius: 8px;
   margin-bottom: 8px;
 }
@@ -2036,12 +2066,12 @@ const headerTitle = computed(() => {
 .comment-author {
   font-size: 13px;
   font-weight: 600;
-  color: #e5e5e5;
+  color: var(--text-primary);
 }
 
 .comment-time {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 .comment-delete-btn {
@@ -2052,7 +2082,7 @@ const headerTitle = computed(() => {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   font-size: 16px;
   opacity: 0;
   transition: all 0.15s;
@@ -2069,7 +2099,7 @@ const headerTitle = computed(() => {
 
 .comment-text {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
   line-height: 1.5;
   white-space: pre-wrap;
 }
@@ -2091,7 +2121,7 @@ const headerTitle = computed(() => {
 
 .comments-empty p {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 /* Tasks Content */
@@ -2103,22 +2133,22 @@ const headerTitle = computed(() => {
 
 .task-header {
   padding: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
 }
 
 .task-title {
   font-size: 14px;
   font-weight: 600;
-  color: #e5e5e5;
+  color: var(--text-primary);
 }
 
 .task-topic-name {
   padding: 12px;
   font-size: 13px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .task-form {
@@ -2139,17 +2169,17 @@ const headerTitle = computed(() => {
   width: 90px;
   flex-shrink: 0;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   text-align: right;
 }
 
 .task-input {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.2);
-  color: #e5e5e5;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 13px;
   outline: none;
 }
@@ -2159,33 +2189,37 @@ const headerTitle = computed(() => {
 }
 
 .task-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted);
 }
 
 .datetime-input {
+  color-scheme: light;
+}
+
+.dark .datetime-input {
   color-scheme: dark;
 }
 
 .task-select {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.2);
-  color: #e5e5e5;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
 }
 
 .task-select option {
-  background: #2d2d2d;
-  color: #e5e5e5;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 .task-calculated {
   flex: 1;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2203,7 +2237,7 @@ const headerTitle = computed(() => {
 .progress-bar-container {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -2221,7 +2255,7 @@ const headerTitle = computed(() => {
   gap: 8px;
   cursor: pointer;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
 }
 
 .task-checkbox input[type="checkbox"] {
@@ -2240,7 +2274,7 @@ const headerTitle = computed(() => {
 .predecessors-value {
   flex: 1;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-secondary);
 }
 
 .task-add-btn,
@@ -2272,7 +2306,7 @@ const headerTitle = computed(() => {
 
 .task-actions {
   padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--border-primary);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2282,7 +2316,7 @@ const headerTitle = computed(() => {
 .task-gantt-link {
   padding: 8px 12px;
   font-size: 13px;
-  color: #60a5fa;
+  color: var(--accent-primary);
   text-align: left;
   border-radius: 4px;
   transition: background-color 0.15s;
@@ -2290,7 +2324,7 @@ const headerTitle = computed(() => {
 
 .task-clear-link:hover,
 .task-gantt-link:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 /* Tags Content */
@@ -2300,6 +2334,10 @@ const headerTitle = computed(() => {
 
 /* Relationships Content */
 .relationships-content {
+  padding: 0;
+}
+
+.boundaries-content {
   padding: 0;
 }
 
@@ -2314,7 +2352,7 @@ const headerTitle = computed(() => {
 
 .shape-label {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   margin-bottom: 8px;
 }
 
@@ -2329,16 +2367,16 @@ const headerTitle = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--border-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .shape-option:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--border-primary);
+  border-color: var(--text-muted);
 }
 
 .shape-option.active {
@@ -2348,7 +2386,7 @@ const headerTitle = computed(() => {
 
 .shape-icon {
   font-size: 18px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
 }
 
 .shape-option.active .shape-icon {
@@ -2389,5 +2427,10 @@ const headerTitle = computed(() => {
 .custom-color .node-color-option {
   width: 100%;
   height: 100%;
+}
+
+/* Themes Content */
+.themes-content {
+  padding: 0;
 }
 </style>

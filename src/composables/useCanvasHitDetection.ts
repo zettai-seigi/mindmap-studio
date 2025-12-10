@@ -4,12 +4,13 @@
  */
 
 import type { Ref, ComputedRef } from 'vue';
-import type { Position, RenderedNode, Relationship } from '../types';
-import { findRenderedNodeById } from '../layouts';
+import type { Position, RenderedNode, Relationship, MindMapNode } from '../types';
+import { findRenderedNodeById, layoutNodes, getAllRenderedNodes } from '../layouts';
 
 export interface HitDetectionConfig {
   renderedRoot: Ref<RenderedNode | null>;
   allNodes: ComputedRef<RenderedNode[]>;
+  floatingTopics: ComputedRef<MindMapNode[]>;
   relationships: ComputedRef<Relationship[]>;
   selectedRelationshipId: ComputedRef<string | null>;
   relationshipLabelPositions: Map<string, { x: number; y: number; baseX: number; baseY: number }>;
@@ -27,6 +28,7 @@ export function useCanvasHitDetection(config: HitDetectionConfig) {
   const {
     renderedRoot,
     allNodes,
+    floatingTopics,
     relationships,
     selectedRelationshipId,
     relationshipLabelPositions,
@@ -35,10 +37,39 @@ export function useCanvasHitDetection(config: HitDetectionConfig) {
   } = config;
 
   /**
-   * Find a node at the given position
+   * Get all rendered nodes from floating topics (laid out as mini mind maps)
+   */
+  function getFloatingTopicRenderedNodes(): RenderedNode[] {
+    const nodes: RenderedNode[] = [];
+    for (const topic of floatingTopics.value) {
+      if (topic.position) {
+        const floatingRendered = layoutNodes(topic, 'mindmap', {
+          centerX: topic.position.x + 60,
+          centerY: topic.position.y + 20,
+          startLevel: 1, // Use branch styling for floating topics
+        });
+        nodes.push(...getAllRenderedNodes(floatingRendered));
+      }
+    }
+    return nodes;
+  }
+
+  /**
+   * Find a node at the given position (including floating topics and their children)
    */
   function findNodeAtPosition(pos: Position): RenderedNode | null {
-    // Check in reverse order (top-most first)
+    // First check floating topic trees (they render on top)
+    const floatingNodes = getFloatingTopicRenderedNodes();
+    for (const node of [...floatingNodes].reverse()) {
+      if (
+        pos.x >= node.x && pos.x <= node.x + node.width &&
+        pos.y >= node.y && pos.y <= node.y + node.height
+      ) {
+        return node;
+      }
+    }
+
+    // Then check regular nodes in reverse order (top-most first)
     const nodes = [...allNodes.value].reverse();
 
     for (const node of nodes) {
@@ -78,23 +109,46 @@ export function useCanvasHitDetection(config: HitDetectionConfig) {
   }
 
   /**
+   * Helper to find node position (works for both tree nodes and floating topics with children)
+   */
+  function getNodePosition(nodeId: string): { x: number; y: number; width: number; height: number } | null {
+    // Check rendered tree first
+    if (renderedRoot.value) {
+      const treeNode = findRenderedNodeById(renderedRoot.value, nodeId);
+      if (treeNode) {
+        return { x: treeNode.x, y: treeNode.y, width: treeNode.width, height: treeNode.height };
+      }
+    }
+
+    // Check floating topic trees (including their children)
+    const floatingNodes = getFloatingTopicRenderedNodes();
+    const floatingNode = floatingNodes.find(n => n.node.id === nodeId);
+    if (floatingNode) {
+      return {
+        x: floatingNode.x,
+        y: floatingNode.y,
+        width: floatingNode.width,
+        height: floatingNode.height,
+      };
+    }
+
+    return null;
+  }
+
+  /**
    * Find a relationship line at the given position
    */
   function findRelationshipAtPosition(pos: Position): string | null {
     for (const rel of relationships.value) {
-      const sourceNode = renderedRoot.value
-        ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
-        : null;
-      const targetNode = renderedRoot.value
-        ? findRenderedNodeById(renderedRoot.value, rel.targetId)
-        : null;
+      const sourcePos = getNodePosition(rel.sourceId);
+      const targetPos = getNodePosition(rel.targetId);
 
-      if (!sourceNode || !targetNode) continue;
+      if (!sourcePos || !targetPos) continue;
 
-      const startX = sourceNode.x + sourceNode.width / 2;
-      const startY = sourceNode.y + sourceNode.height / 2;
-      const endX = targetNode.x + targetNode.width / 2;
-      const endY = targetNode.y + targetNode.height / 2;
+      const startX = sourcePos.x + sourcePos.width / 2;
+      const startY = sourcePos.y + sourcePos.height / 2;
+      const endX = targetPos.x + targetPos.width / 2;
+      const endY = targetPos.y + targetPos.height / 2;
 
       const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
 
@@ -116,19 +170,15 @@ export function useCanvasHitDetection(config: HitDetectionConfig) {
     const rel = relationships.value.find(r => r.id === selectedRelationshipId.value);
     if (!rel) return null;
 
-    const sourceNode = renderedRoot.value
-      ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
-      : null;
-    const targetNode = renderedRoot.value
-      ? findRenderedNodeById(renderedRoot.value, rel.targetId)
-      : null;
+    const sourcePos = getNodePosition(rel.sourceId);
+    const targetPos = getNodePosition(rel.targetId);
 
-    if (!sourceNode || !targetNode) return null;
+    if (!sourcePos || !targetPos) return null;
 
-    const startX = sourceNode.x + sourceNode.width / 2;
-    const startY = sourceNode.y + sourceNode.height / 2;
-    const endX = targetNode.x + targetNode.width / 2;
-    const endY = targetNode.y + targetNode.height / 2;
+    const startX = sourcePos.x + sourcePos.width / 2;
+    const startY = sourcePos.y + sourcePos.height / 2;
+    const endX = targetPos.x + targetPos.width / 2;
+    const endY = targetPos.y + targetPos.height / 2;
 
     const { cp1, cp2 } = getRelationshipControlPoints(rel, startX, startY, endX, endY);
 

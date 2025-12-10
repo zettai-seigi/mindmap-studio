@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
-import { layoutNodes, getAllRenderedNodes, findRenderedNodeById } from '../layouts';
+import { layoutNodes, getAllRenderedNodes, findRenderedNodeById, getBoundingBox } from '../layouts';
 import type { RenderedNode, Position } from '../types';
 import ContextMenu from './ContextMenu.vue';
 import { getMarkerDisplay } from '../composables/useMarkerDisplay';
 import { useCanvasCoordinates } from '../composables/useCanvasCoordinates';
 import { useCanvasHitDetection } from '../composables/useCanvasHitDetection';
+import { useTheme } from '../composables/useTheme';
 
 const props = defineProps<{
   focusMode?: boolean;
@@ -14,6 +15,7 @@ const props = defineProps<{
 }>();
 
 const store = useMindMapStore();
+const { canvasBackground, isDark } = useTheme();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -54,6 +56,14 @@ const relationshipLabelInputRef = ref<HTMLInputElement | null>(null);
 // Store label positions for hit detection (updated during render)
 const relationshipLabelPositions = new Map<string, { x: number; y: number; baseX: number; baseY: number }>();
 
+// Store boundary and summary bounds for hit detection (updated during render)
+const boundaryBounds = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>();
+const summaryBounds = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>();
+
+// Computed: selected boundary and summary from store
+const selectedBoundaryId = computed(() => store.canvasState.selectedBoundaryId);
+const selectedSummaryId = computed(() => store.canvasState.selectedSummaryId);
+
 // Context menu state
 const contextMenu = ref<{ show: boolean; x: number; y: number; nodeId: string | null }>({
   show: false,
@@ -74,6 +84,8 @@ const allNodes = computed(() => {
 
 // Colors based on theme
 const colors = computed(() => store.theme.colors);
+const fonts = computed(() => store.theme.fonts);
+const theme = computed(() => store.theme);
 
 // Computed relationships from store
 const relationships = computed(() => store.relationships);
@@ -92,6 +104,9 @@ const { screenToWorld, getNodeEdgePoint } = useCanvasCoordinates({
   panY: () => store.viewState.panY,
 });
 
+// Floating topics from store
+const floatingTopics = computed(() => store.floatingTopics);
+
 // Hit detection utilities
 const {
   findNodeAtPosition,
@@ -101,6 +116,7 @@ const {
 } = useCanvasHitDetection({
   renderedRoot,
   allNodes,
+  floatingTopics,
   relationships,
   selectedRelationshipId,
   relationshipLabelPositions,
@@ -134,8 +150,9 @@ function render() {
   c.setTransform(1, 0, 0, 1, 0, 0);
 
   // Clear and fill entire canvas with background color
-  const sf = store.sheetFormat;
-  c.fillStyle = sf.backgroundColor;
+  // Use mindmap theme background if available, otherwise use system theme background
+  const themeBgColor = colors.value.background || canvasBackground.value;
+  c.fillStyle = themeBgColor;
   c.fillRect(0, 0, canvas.width, canvas.height);
 
   // Apply DPR scaling, then zoom and pan
@@ -171,21 +188,27 @@ function render() {
     drawNodes(c, renderedRoot.value);
   }
 
-  // Draw floating topics
+  // Draw floating topics as mini mind maps with their children
   store.floatingTopics.forEach(topic => {
     if (topic.position) {
-      drawNode(c, {
-        node: topic,
-        x: topic.position.x,
-        y: topic.position.y,
-        width: 120,
-        height: 40,
-        collapsed: false,
-        level: 0,
-        children: [],
+      // Layout the floating topic as a mini mind map
+      // Use startLevel: 1 so floating topics use branch styling (not root styling)
+      const floatingRendered = layoutNodes(topic, 'mindmap', {
+        centerX: topic.position.x + 60, // Offset so position is top-left corner
+        centerY: topic.position.y + 20,
+        startLevel: 1,
       });
+
+      // Draw connections for this floating topic tree
+      drawConnections(c, floatingRendered);
+
+      // Draw all nodes in this floating topic tree
+      drawNodes(c, floatingRendered);
     }
   });
+
+  // Draw summaries (brackets that group children)
+  drawSummaries(c);
 
   // Draw floating cliparts
   store.floatingCliparts.forEach(clipart => {
@@ -257,11 +280,20 @@ function drawGrid(c: CanvasRenderingContext2D) {
   }
 }
 
-function drawConnections(c: CanvasRenderingContext2D, rendered: RenderedNode) {
+function drawConnections(c: CanvasRenderingContext2D, rendered: RenderedNode, inheritedStructure?: string) {
+  // Determine effective structure for this node
+  const effectiveStructure = rendered.node.structure || inheritedStructure;
+
   rendered.children.forEach((child, index) => {
-    const color = colors.value.branches[index % colors.value.branches.length] || '#3b82f6';
-    drawConnection(c, rendered, child, color, index);
-    drawConnections(c, child);
+    // Use theme's line color, or branch colors if rainbow branches enabled for connections
+    let color: string;
+    if (theme.value.rainbowBranches && rendered.level === 0) {
+      color = colors.value.branches[index % colors.value.branches.length] || colors.value.lines || '#3b82f6';
+    } else {
+      color = colors.value.lines || colors.value.branches[0] || '#94a3b8';
+    }
+    drawConnection(c, rendered, child, color, index, effectiveStructure);
+    drawConnections(c, child, effectiveStructure);
   });
 }
 
@@ -270,14 +302,33 @@ function drawConnection(
   parent: RenderedNode,
   child: RenderedNode,
   color: string,
-  _index: number
+  _index: number,
+  inheritedStructure?: string
 ) {
   c.strokeStyle = color;
   c.lineWidth = Math.max(1.5, 3 - child.level * 0.5);
   c.lineCap = 'round';
   c.lineJoin = 'round';
 
-  const structure = store.structure;
+  // Determine effective structure: node's own structure overrides inherited, then global
+  const effectiveStructure = parent.node.structure || inheritedStructure || store.structure;
+
+  // Fishbone structure (either node-level or inherited): draw diagonal lines
+  if (effectiveStructure === 'fishbone') {
+    const startX = parent.x + parent.width / 2;
+    const startY = parent.y + parent.height / 2;
+    const endX = child.x + child.width / 2;
+    const endY = child.y + child.height / 2;
+
+    // Simple diagonal line for fishbone children
+    c.beginPath();
+    c.moveTo(startX, startY);
+    c.lineTo(endX, endY);
+    c.stroke();
+    return;
+  }
+
+  const structure = effectiveStructure;
 
   // Org Chart / Tree: straight lines from bottom-center of parent to top-center of child
   if (structure === 'orgchart' || structure === 'tree') {
@@ -313,31 +364,6 @@ function drawConnection(
     c.lineTo(midX, endY);    // Vertical to align with child
     c.lineTo(endX, endY);    // Horizontal to child
     c.stroke();
-    return;
-  }
-
-  // Fishbone: diagonal lines to the spine
-  if (structure === 'fishbone') {
-    const startX = parent.x + parent.width / 2;
-    const startY = parent.y + parent.height / 2;
-    const endX = child.x + child.width / 2;
-    const endY = child.y + child.height / 2;
-
-    // For main branches (level 1), draw diagonal to spine then along spine
-    if (child.level === 1) {
-      // Connect to spine (horizontal line at parent's Y level)
-      c.beginPath();
-      c.moveTo(endX, endY);
-      c.lineTo(endX, startY);  // Diagonal down to spine level
-      c.lineTo(startX, startY); // Along the spine
-      c.stroke();
-    } else {
-      // Sub-branches: simple diagonal
-      c.beginPath();
-      c.moveTo(startX, startY);
-      c.lineTo(endX, endY);
-      c.stroke();
-    }
     return;
   }
 
@@ -427,14 +453,34 @@ function getRelationshipControlPoints(rel: typeof store.relationships[0], startX
   return { cp1, cp2, midX, midY };
 }
 
+// Helper to find a rendered node by ID (searches main tree and floating topics)
+function findNodeInAllTrees(nodeId: string): RenderedNode | null {
+  // First check main tree
+  if (renderedRoot.value) {
+    const node = findRenderedNodeById(renderedRoot.value, nodeId);
+    if (node) return node;
+  }
+
+  // Then check floating topic trees
+  for (const topic of store.floatingTopics) {
+    if (topic.position) {
+      const floatingRendered = layoutNodes(topic, 'mindmap', {
+        centerX: topic.position.x + 60,
+        centerY: topic.position.y + 20,
+        startLevel: 1,
+      });
+      const node = findRenderedNodeById(floatingRendered, nodeId);
+      if (node) return node;
+    }
+  }
+
+  return null;
+}
+
 function drawRelationships(c: CanvasRenderingContext2D) {
   store.relationships.forEach(rel => {
-    const sourceNode = renderedRoot.value
-      ? findRenderedNodeById(renderedRoot.value, rel.sourceId)
-      : null;
-    const targetNode = renderedRoot.value
-      ? findRenderedNodeById(renderedRoot.value, rel.targetId)
-      : null;
+    const sourceNode = findNodeInAllTrees(rel.sourceId);
+    const targetNode = findNodeInAllTrees(rel.targetId);
 
     if (!sourceNode || !targetNode) return;
 
@@ -585,6 +631,9 @@ function drawArrow(
 }
 
 function drawBoundaries(c: CanvasRenderingContext2D) {
+  // Clear previous bounds
+  boundaryBounds.clear();
+
   store.boundaries.forEach(boundary => {
     const nodes = boundary.nodeIds
       .map(id => renderedRoot.value ? findRenderedNodeById(renderedRoot.value, id) : null)
@@ -592,43 +641,123 @@ function drawBoundaries(c: CanvasRenderingContext2D) {
 
     if (nodes.length === 0) return;
 
-    // Calculate bounding box
+    // Calculate bounding box with padding
+    const padding = 25;
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
 
     nodes.forEach(node => {
-      minX = Math.min(minX, node.x - 20);
-      minY = Math.min(minY, node.y - 20);
-      maxX = Math.max(maxX, node.x + node.width + 20);
-      maxY = Math.max(maxY, node.y + node.height + 20);
+      minX = Math.min(minX, node.x - padding);
+      minY = Math.min(minY, node.y - padding);
+      maxX = Math.max(maxX, node.x + node.width + padding);
+      maxY = Math.max(maxY, node.y + node.height + padding);
     });
 
-    c.fillStyle = boundary.backgroundColor;
-    c.strokeStyle = boundary.color;
-    c.lineWidth = 2;
+    // Store bounds for hit detection
+    boundaryBounds.set(boundary.id, { minX, minY, maxX, maxY });
 
-    if (boundary.shape === 'rounded') {
-      roundRect(c, minX, minY, maxX - minX, maxY - minY, 15);
-    } else {
-      c.fillRect(minX, minY, maxX - minX, maxY - minY);
-      c.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    const width = maxX - minX;
+    const height = maxY - minY;
+
+    const isSelected = selectedBoundaryId.value === boundary.id;
+
+    c.fillStyle = boundary.backgroundColor;
+    c.strokeStyle = isSelected ? '#3b82f6' : boundary.color;
+    c.lineWidth = isSelected ? 3 : 2;
+    c.setLineDash([]);
+
+    switch (boundary.shape) {
+      case 'rounded':
+        drawBoundaryRounded(c, minX, minY, width, height, 15);
+        break;
+      case 'rectangle':
+        c.fillRect(minX, minY, width, height);
+        c.strokeRect(minX, minY, width, height);
+        break;
+      case 'cloud':
+        drawBoundaryCloud(c, minX, minY, width, height);
+        break;
+      case 'wave':
+        drawBoundaryWave(c, minX, minY, width, height);
+        break;
+      default:
+        drawBoundaryRounded(c, minX, minY, width, height, 15);
     }
 
+    // Draw label if present
     if (boundary.label) {
+      const labelMargin = 12; // Margin from edges for left/right alignment
+      const labelPadding = 6;
+      const labelFont = 'bold 12px system-ui, sans-serif';
+      c.font = labelFont;
+
+      const textMetrics = c.measureText(boundary.label);
+      const labelWidth = textMetrics.width + labelPadding * 2;
+      const labelHeight = 18;
+
+      // Calculate label X position based on alignment
+      const align = boundary.labelAlign || 'center';
+      let labelX: number;
+      let textAlign: CanvasTextAlign;
+
+      switch (align) {
+        case 'left':
+          labelX = minX + labelMargin;
+          textAlign = 'left';
+          break;
+        case 'right':
+          labelX = maxX - labelMargin;
+          textAlign = 'right';
+          break;
+        case 'center':
+        default:
+          labelX = minX + width / 2;
+          textAlign = 'center';
+          break;
+      }
+
+      // Calculate background box position
+      let bgX: number;
+      switch (align) {
+        case 'left':
+          bgX = labelX - labelPadding;
+          break;
+        case 'right':
+          bgX = labelX - textMetrics.width - labelPadding;
+          break;
+        case 'center':
+        default:
+          bgX = labelX - labelWidth / 2;
+          break;
+      }
+
+      const labelY = minY - labelHeight / 2 - 2;
+
+      // Draw label background
+      c.fillStyle = boundary.backgroundColor || 'rgba(255, 255, 255, 0.95)';
+      c.beginPath();
+      const bgRadius = 4;
+      c.roundRect(bgX, labelY - labelHeight / 2, labelWidth, labelHeight, bgRadius);
+      c.fill();
+
+      // Draw label border
+      c.strokeStyle = boundary.color;
+      c.lineWidth = 1.5;
+      c.stroke();
+
+      // Draw label text
       c.fillStyle = boundary.color;
-      c.font = 'bold 12px sans-serif';
-      c.fillText(boundary.label, minX + 10, minY - 5);
+      c.font = labelFont;
+      c.textAlign = textAlign;
+      c.textBaseline = 'middle';
+      c.fillText(boundary.label, labelX, labelY);
     }
   });
 }
 
-function roundRect(
+function drawBoundaryRounded(
   c: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number
+  x: number, y: number, w: number, h: number, r: number
 ) {
   c.beginPath();
   c.moveTo(x + r, y);
@@ -640,6 +769,266 @@ function roundRect(
   c.fill();
   c.stroke();
 }
+
+function drawBoundaryCloud(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number
+) {
+  // Draw a simple rounded rectangle with scalloped edges
+  const scallop = 12;
+  const padding = scallop;
+
+  // Adjust bounds to account for scallops
+  const innerX = x + padding;
+  const innerY = y + padding;
+  const innerW = w - padding * 2;
+  const innerH = h - padding * 2;
+
+  c.beginPath();
+
+  // Calculate number of scallops for each edge
+  const topScallops = Math.max(3, Math.round(innerW / 40));
+  const sideScallops = Math.max(2, Math.round(innerH / 40));
+
+  // Start at top-left
+  c.moveTo(innerX, innerY);
+
+  // Top edge scallops
+  const topStep = innerW / topScallops;
+  for (let i = 0; i < topScallops; i++) {
+    const sx = innerX + i * topStep;
+    const ex = innerX + (i + 1) * topStep;
+    const midX = (sx + ex) / 2;
+    c.quadraticCurveTo(midX, innerY - scallop, ex, innerY);
+  }
+
+  // Right edge scallops
+  const rightStep = innerH / sideScallops;
+  for (let i = 0; i < sideScallops; i++) {
+    const sy = innerY + i * rightStep;
+    const ey = innerY + (i + 1) * rightStep;
+    const midY = (sy + ey) / 2;
+    c.quadraticCurveTo(innerX + innerW + scallop, midY, innerX + innerW, ey);
+  }
+
+  // Bottom edge scallops (reverse)
+  for (let i = topScallops - 1; i >= 0; i--) {
+    const ex = innerX + i * topStep;
+    const sx = innerX + (i + 1) * topStep;
+    const midX = (sx + ex) / 2;
+    c.quadraticCurveTo(midX, innerY + innerH + scallop, ex, innerY + innerH);
+  }
+
+  // Left edge scallops (reverse)
+  for (let i = sideScallops - 1; i >= 0; i--) {
+    const ey = innerY + i * rightStep;
+    const sy = innerY + (i + 1) * rightStep;
+    const midY = (sy + ey) / 2;
+    c.quadraticCurveTo(innerX - scallop, midY, innerX, ey);
+  }
+
+  c.closePath();
+  c.fill();
+  c.stroke();
+}
+
+function drawBoundaryWave(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number
+) {
+  const waveHeight = 6;
+  const numWaves = Math.max(4, Math.round(w / 50));
+  const waveLength = w / numWaves;
+
+  c.beginPath();
+
+  // Start at top-left
+  c.moveTo(x, y);
+
+  // Top edge - wavy
+  for (let i = 0; i < numWaves; i++) {
+    const startX = x + i * waveLength;
+    const endX = x + (i + 1) * waveLength;
+    const midX = (startX + endX) / 2;
+    c.quadraticCurveTo(midX, y - waveHeight, endX, y);
+  }
+
+  // Right edge - straight
+  c.lineTo(x + w, y + h);
+
+  // Bottom edge - wavy (reverse direction)
+  for (let i = numWaves; i > 0; i--) {
+    const startX = x + i * waveLength;
+    const endX = x + (i - 1) * waveLength;
+    const midX = (startX + endX) / 2;
+    c.quadraticCurveTo(midX, y + h + waveHeight, endX, y + h);
+  }
+
+  // Left edge - straight back to start
+  c.lineTo(x, y);
+
+  c.closePath();
+  c.fill();
+  c.stroke();
+}
+
+// Draw summaries (bracket shapes that group children)
+function drawSummaries(c: CanvasRenderingContext2D) {
+  // Clear previous bounds
+  summaryBounds.clear();
+
+  store.summaries.forEach((summary: { id: string; parentNodeId: string; rangeStart: number; rangeEnd: number; topicId: string; topicText: string; color?: string; backgroundColor?: string }) => {
+    // Find the parent node to get the summarized children
+    if (!renderedRoot.value) return;
+
+    const parentNode = findRenderedNodeById(renderedRoot.value, summary.parentNodeId);
+    if (!parentNode) return;
+
+    // Get the children in the range
+    const startIdx = summary.rangeStart;
+    const endIdx = Math.min(summary.rangeEnd, parentNode.children.length - 1);
+
+    if (startIdx > parentNode.children.length - 1) return;
+
+    const summarizedChildren = parentNode.children.slice(startIdx, endIdx + 1);
+    if (summarizedChildren.length === 0) return;
+
+    // Calculate bounding box of summarized children
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let bracketX = 0;
+    let childMinX = Infinity;
+    let childMaxX = -Infinity;
+
+    // Determine bracket side based on first child's position relative to parent
+    const firstChild = summarizedChildren[0];
+    if (!firstChild) return;
+    const isRightSide = firstChild.x > parentNode.x + parentNode.width / 2;
+
+    summarizedChildren.forEach(child => {
+      minY = Math.min(minY, child.y);
+      maxY = Math.max(maxY, child.y + child.height);
+      childMinX = Math.min(childMinX, child.x);
+      childMaxX = Math.max(childMaxX, child.x + child.width);
+
+      if (isRightSide) {
+        // Bracket on the right side of children
+        bracketX = Math.max(bracketX, child.x + child.width);
+      } else {
+        // Bracket on the left side of children
+        bracketX = bracketX === 0 ? child.x : Math.min(bracketX, child.x);
+      }
+    });
+
+    // Add padding
+    const bracketPadding = 15;
+    const bracketWidth = 12;
+
+    if (isRightSide) {
+      bracketX += bracketPadding;
+    } else {
+      bracketX -= bracketPadding;
+    }
+
+    const isSelected = selectedSummaryId.value === summary.id;
+    const summaryColor = summary.color || colors.value.lines || '#64748b';
+
+    // Store bounds for hit detection (include bracket and label area)
+    const textPaddingForBounds = 8;
+    const labelWidth = 100; // Approximate max label width
+    if (isRightSide) {
+      summaryBounds.set(summary.id, {
+        minX: bracketX,
+        minY: minY - 10,
+        maxX: bracketX + bracketWidth + textPaddingForBounds + labelWidth,
+        maxY: maxY + 10
+      });
+    } else {
+      summaryBounds.set(summary.id, {
+        minX: bracketX - bracketWidth - textPaddingForBounds - labelWidth,
+        minY: minY - 10,
+        maxX: bracketX,
+        maxY: maxY + 10
+      });
+    }
+
+    // Draw the bracket
+    c.strokeStyle = isSelected ? '#3b82f6' : summaryColor;
+    c.lineWidth = isSelected ? 3 : 2;
+    c.setLineDash([]);
+
+    const midY = (minY + maxY) / 2;
+    const bracketCurve = 8;
+
+    c.beginPath();
+    if (isRightSide) {
+      // Right-side bracket: ]
+      c.moveTo(bracketX, minY);
+      c.quadraticCurveTo(bracketX + bracketCurve, minY, bracketX + bracketCurve, minY + bracketCurve);
+      c.lineTo(bracketX + bracketCurve, midY - bracketCurve);
+      c.quadraticCurveTo(bracketX + bracketCurve, midY, bracketX + bracketWidth, midY);
+      c.quadraticCurveTo(bracketX + bracketCurve, midY, bracketX + bracketCurve, midY + bracketCurve);
+      c.lineTo(bracketX + bracketCurve, maxY - bracketCurve);
+      c.quadraticCurveTo(bracketX + bracketCurve, maxY, bracketX, maxY);
+    } else {
+      // Left-side bracket: [
+      c.moveTo(bracketX, minY);
+      c.quadraticCurveTo(bracketX - bracketCurve, minY, bracketX - bracketCurve, minY + bracketCurve);
+      c.lineTo(bracketX - bracketCurve, midY - bracketCurve);
+      c.quadraticCurveTo(bracketX - bracketCurve, midY, bracketX - bracketWidth, midY);
+      c.quadraticCurveTo(bracketX - bracketCurve, midY, bracketX - bracketCurve, midY + bracketCurve);
+      c.lineTo(bracketX - bracketCurve, maxY - bracketCurve);
+      c.quadraticCurveTo(bracketX - bracketCurve, maxY, bracketX, maxY);
+    }
+    c.stroke();
+
+    // Draw summary topic text
+    const textPadding = 8;
+    const textX = isRightSide ? bracketX + bracketWidth + textPadding : bracketX - bracketWidth - textPadding;
+
+    c.font = `${fonts.value.branchSize - 2}px ${fonts.value.branch}`;
+    c.fillStyle = colors.value.branchText || '#1e293b';
+    c.textAlign = isRightSide ? 'left' : 'right';
+    c.textBaseline = 'middle';
+
+    // Draw background for text
+    const textMetrics = c.measureText(summary.topicText);
+    const textHeight = fonts.value.branchSize;
+    const bgPadding = 6;
+    const bgX = isRightSide ? textX - bgPadding : textX - textMetrics.width - bgPadding;
+    const bgWidth = textMetrics.width + bgPadding * 2;
+
+    const bgColor = summary.backgroundColor || colors.value.subTopicBg || '#f1f5f9';
+    c.fillStyle = bgColor;
+    c.beginPath();
+    const bgRadius = 4;
+    c.roundRect(bgX, midY - textHeight / 2 - bgPadding / 2, bgWidth, textHeight + bgPadding, bgRadius);
+    c.fill();
+
+    // Draw border
+    c.strokeStyle = isSelected ? '#3b82f6' : summaryColor;
+    c.lineWidth = isSelected ? 2 : 1;
+    c.stroke();
+
+    // Draw text
+    c.fillStyle = colors.value.subTopicText || colors.value.branchText || '#1e293b';
+    c.fillText(summary.topicText, textX, midY);
+
+    // Draw connecting line from bracket tip to text box
+    c.strokeStyle = isSelected ? '#3b82f6' : summaryColor;
+    c.lineWidth = isSelected ? 3 : 2;
+    c.beginPath();
+    if (isRightSide) {
+      c.moveTo(bracketX + bracketWidth, midY);
+      c.lineTo(textX - bgPadding, midY);
+    } else {
+      c.moveTo(bracketX - bracketWidth, midY);
+      c.lineTo(textX + bgPadding, midY);
+    }
+    c.stroke();
+  });
+}
+
 
 // Shape drawing functions
 type NodeShapeType = 'rectangle' | 'rounded' | 'ellipse' | 'diamond' | 'parallelogram' | 'cloud' | 'capsule' | 'hexagon' | 'underline' | 'none';
@@ -869,45 +1258,76 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode, focusBran
   // Apply combined opacity to the entire node rendering
   c.globalAlpha = focusOpacity;
 
-  // Get node shape from style, default to 'rounded'
-  const nodeShape: NodeShapeType = (node.style?.shape as NodeShapeType) || 'rounded';
+  // Get node shape from style, or use theme defaults based on level
+  let nodeShape: NodeShapeType;
+  if (node.style?.shape) {
+    nodeShape = node.style.shape as NodeShapeType;
+  } else if (level === 0) {
+    // Root node uses theme's rootShape
+    nodeShape = (theme.value.rootShape as NodeShapeType) || 'rounded';
+  } else if (level === 1) {
+    // Main branches use theme's branchShape
+    nodeShape = (theme.value.branchShape as NodeShapeType) || 'rounded';
+  } else {
+    // Sub-topics use subTopicShape if defined, otherwise default to rounded
+    nodeShape = (theme.value.subTopicShape as NodeShapeType) || 'rounded';
+  }
 
-  // Background color
-  const bgColor = node.style?.backgroundColor || (level === 0
-    ? colors.value.rootNode
-    : (colors.value.branches[level % colors.value.branches.length] || '#3b82f6'));
+  // Background color - use theme colors based on node level
+  // Level 0: root node, Level 1: main branches, Level 2+: sub-topics
+  let bgColor: string;
+  if (node.style?.backgroundColor) {
+    bgColor = node.style.backgroundColor;
+  } else if (level === 0) {
+    bgColor = colors.value.rootNode;
+  } else if (level === 1) {
+    // Main branches - use rainbow branches if enabled
+    const branchIndex = theme.value.rainbowBranches
+      ? (node.id.charCodeAt(0) + node.id.charCodeAt(node.id.length - 1)) % colors.value.branches.length
+      : 0;
+    bgColor = colors.value.branches[branchIndex] ?? colors.value.branches[0] ?? '#3b82f6';
+  } else {
+    // Sub-topics - use subTopicBg from theme
+    bgColor = colors.value.subTopicBg ?? colors.value.branches[level % colors.value.branches.length] ?? '#f1f5f9';
+  }
 
   c.fillStyle = bgColor;
-  c.strokeStyle = 'transparent';
   c.lineWidth = 1;
 
-  // Shadow (not for underline/none shapes)
-  if (nodeShape !== 'underline' && nodeShape !== 'none') {
+  // Handle underline shape specially - use theme line color for the underline
+  if (nodeShape === 'underline') {
+    c.strokeStyle = colors.value.lines || bgColor;
+    c.lineWidth = 2;
+    drawShape(c, nodeShape, x, y, width, height);
+  } else if (nodeShape === 'none') {
+    // No shape to draw, just show text
+  } else {
+    // Regular shapes with shadow
+    c.strokeStyle = 'transparent';
     c.shadowColor = 'rgba(0, 0, 0, 0.1)';
     c.shadowBlur = 10;
     c.shadowOffsetX = 2;
     c.shadowOffsetY = 2;
+    drawShape(c, nodeShape, x, y, width, height);
+    c.shadowColor = 'transparent';
   }
 
-  // Draw shape
-  drawShape(c, nodeShape, x, y, width, height);
-
-  c.shadowColor = 'transparent';
-
-  // Selection highlight
+  // Selection highlight - use rounded rect for underline/none shapes
   if (isSelected) {
     c.fillStyle = 'transparent';
     c.strokeStyle = '#3b82f6';
     c.lineWidth = 3;
-    drawShape(c, nodeShape, x - 3, y - 3, width + 6, height + 6);
+    const highlightShape = (nodeShape === 'underline' || nodeShape === 'none') ? 'rounded' : nodeShape;
+    drawShape(c, highlightShape, x - 3, y - 3, width + 6, height + 6);
   }
 
-  // Hover highlight
+  // Hover highlight - use rounded rect for underline/none shapes
   if (isHovered && !isSelected) {
     c.fillStyle = 'transparent';
     c.strokeStyle = '#93c5fd';
     c.lineWidth = 2;
-    drawShape(c, nodeShape, x - 2, y - 2, width + 4, height + 4);
+    const highlightShape = (nodeShape === 'underline' || nodeShape === 'none') ? 'rounded' : nodeShape;
+    drawShape(c, highlightShape, x - 2, y - 2, width + 4, height + 4);
   }
 
   // Calculate markers width first (markers go inside the node, left of text)
@@ -983,14 +1403,77 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode, focusBran
   }
 
   // Text - positioned after markers
-  c.fillStyle = '#ffffff';
-  c.font = level === 0 ? 'bold 16px sans-serif' : '14px sans-serif';
+  // Use theme fonts and colors
+  const fontConfig = fonts.value;
+  const themeColors = colors.value;
+
+  // Helper to determine if a color is dark (for contrast calculation)
+  function isColorDark(color: string): boolean {
+    // Parse hex color
+    let r = 0, g = 0, b = 0;
+    if (color.startsWith('#')) {
+      const hex = color.slice(1);
+      if (hex.length === 3) {
+        r = parseInt((hex[0] || '0') + (hex[0] || '0'), 16);
+        g = parseInt((hex[1] || '0') + (hex[1] || '0'), 16);
+        b = parseInt((hex[2] || '0') + (hex[2] || '0'), 16);
+      } else if (hex.length === 6) {
+        r = parseInt(hex.slice(0, 2), 16);
+        g = parseInt(hex.slice(2, 4), 16);
+        b = parseInt(hex.slice(4, 6), 16);
+      }
+    }
+    // Calculate relative luminance
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance < 0.5;
+  }
+
+  // Determine text color based on background for proper contrast
+  // For underline/none shapes, use canvas background for contrast check since node has no fill
+  const effectiveBgColor = (nodeShape === 'underline' || nodeShape === 'none')
+    ? (themeColors.background || '#ffffff')
+    : bgColor;
+
+  let textColor: string;
+  if (level === 0) {
+    textColor = themeColors.rootNodeText || '#ffffff';
+  } else if (level === 1) {
+    // For branches, check if effective background is dark and auto-adjust if needed
+    const branchBgIsDark = isColorDark(effectiveBgColor);
+    textColor = branchBgIsDark ? '#ffffff' : (themeColors.branchText || '#1f2937');
+  } else {
+    // For sub-topics, check if effective background is dark and auto-adjust
+    const subTopicBgIsDark = isColorDark(effectiveBgColor);
+    textColor = subTopicBgIsDark ? '#ffffff' : (themeColors.subTopicText || '#1f2937');
+  }
+
+  c.fillStyle = textColor;
+
+  // Determine font based on level
+  const fontFamily = level === 0
+    ? (fontConfig?.root || 'system-ui, sans-serif')
+    : level === 1
+      ? (fontConfig?.branch || 'system-ui, sans-serif')
+      : (fontConfig?.subTopic || 'system-ui, sans-serif');
+
+  const fontSize = level === 0
+    ? (fontConfig?.rootSize || 18)
+    : level === 1
+      ? (fontConfig?.branchSize || 14)
+      : (fontConfig?.subTopicSize || 13);
+
+  const fontWeight = level === 0
+    ? (fontConfig?.rootWeight || 700)
+    : level === 1
+      ? (fontConfig?.branchWeight || 600)
+      : (fontConfig?.subTopicWeight || 400);
+
+  c.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   c.textAlign = 'left';
   c.textBaseline = 'middle';
 
   let displayText = node.text;
   // Truncate text if too long
-  c.font = level === 0 ? 'bold 16px sans-serif' : '14px sans-serif';
   while (c.measureText(displayText).width > textMaxWidth && displayText.length > 3) {
     displayText = displayText.slice(0, -4) + '...';
   }
@@ -1054,6 +1537,44 @@ function drawNode(c: CanvasRenderingContext2D, rendered: RenderedNode, focusBran
     }
   }
 
+  // Smart checkbox roll-up: Show aggregated progress bar if all children have tasks
+  const childrenProgress = store.calculateChildrenProgress(node.id);
+  if (childrenProgress !== null) {
+    // Draw progress bar at the bottom of the node
+    const barHeight = 4;
+    const barY = y + height - barHeight - 2;
+    const barX = x + 4;
+    const barWidth = width - 8;
+
+    // Background bar
+    c.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    c.beginPath();
+    c.roundRect(barX, barY, barWidth, barHeight, 2);
+    c.fill();
+
+    // Progress fill
+    const progressWidth = (barWidth * childrenProgress) / 100;
+    if (progressWidth > 0) {
+      // Color based on progress
+      const progressColor = childrenProgress >= 100
+        ? '#22c55e'  // Green for complete
+        : childrenProgress >= 50
+          ? '#f59e0b' // Amber for in-progress
+          : '#3b82f6'; // Blue for started
+      c.fillStyle = progressColor;
+      c.beginPath();
+      c.roundRect(barX, barY, progressWidth, barHeight, 2);
+      c.fill();
+    }
+
+    // Progress text (small percentage)
+    c.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    c.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
+    c.textAlign = 'left';
+    c.textBaseline = 'top';
+    c.fillText(`${childrenProgress}%`, x + 6, y + height + 2);
+  }
+
   // Reset text alignment and global alpha
   c.textAlign = 'left';
   c.textBaseline = 'alphabetic';
@@ -1079,6 +1600,30 @@ function drawFloatingClipart(c: CanvasRenderingContext2D, clipart: { id: string;
   // Reset text alignment
   c.textAlign = 'left';
   c.textBaseline = 'alphabetic';
+}
+
+// ============================================
+// Hit Detection for Boundaries and Summaries
+// ============================================
+
+function findBoundaryAtPosition(pos: Position): string | null {
+  for (const [boundaryId, bounds] of boundaryBounds.entries()) {
+    if (pos.x >= bounds.minX && pos.x <= bounds.maxX &&
+        pos.y >= bounds.minY && pos.y <= bounds.maxY) {
+      return boundaryId;
+    }
+  }
+  return null;
+}
+
+function findSummaryAtPosition(pos: Position): string | null {
+  for (const [summaryId, bounds] of summaryBounds.entries()) {
+    if (pos.x >= bounds.minX && pos.x <= bounds.maxX &&
+        pos.y >= bounds.minY && pos.y <= bounds.maxY) {
+      return summaryId;
+    }
+  }
+  return null;
 }
 
 // ============================================
@@ -1136,6 +1681,22 @@ function handleMouseDown(e: MouseEvent) {
     const clickedRelId = findRelationshipAtPosition(pos);
     if (clickedRelId && !clickedNode) {
       store.selectRelationship(clickedRelId);
+      render();
+      return;
+    }
+
+    // Check if clicking on a summary (higher priority than boundary since summaries are smaller)
+    const clickedSummaryId = findSummaryAtPosition(pos);
+    if (clickedSummaryId && !clickedNode) {
+      store.selectSummary(clickedSummaryId);
+      render();
+      return;
+    }
+
+    // Check if clicking on a boundary
+    const clickedBoundaryId = findBoundaryAtPosition(pos);
+    if (clickedBoundaryId && !clickedNode) {
+      store.selectBoundary(clickedBoundaryId);
       render();
       return;
     }
@@ -1501,12 +2062,146 @@ function handleDrop(e: DragEvent) {
   }
 }
 
+// Fit all nodes into view
+function fitToView(padding = 50) {
+  if (allNodes.value.length === 0) return;
+
+  const bounds = getBoundingBox(allNodes.value);
+  const contentWidth = bounds.maxX - bounds.minX + padding * 2;
+  const contentHeight = bounds.maxY - bounds.minY + padding * 2;
+
+  // Calculate zoom to fit content
+  const zoomX = canvasWidth.value / contentWidth;
+  const zoomY = canvasHeight.value / contentHeight;
+  const newZoom = Math.min(zoomX, zoomY, 2); // Cap at 2x zoom
+
+  // Calculate center of content
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+
+  // Calculate pan to center content
+  const newPanX = canvasWidth.value / 2 - centerX;
+  const newPanY = canvasHeight.value / 2 - centerY;
+
+  store.setZoom(newZoom);
+  store.setPan(newPanX, newPanY);
+  render();
+}
+
+// Get bounding box of all content
+function getContentBounds(padding = 50) {
+  if (allNodes.value.length === 0) {
+    return { minX: 0, minY: 0, maxX: canvasWidth.value, maxY: canvasHeight.value, width: canvasWidth.value, height: canvasHeight.value };
+  }
+
+  const bounds = getBoundingBox(allNodes.value);
+  return {
+    minX: bounds.minX - padding,
+    minY: bounds.minY - padding,
+    maxX: bounds.maxX + padding,
+    maxY: bounds.maxY + padding,
+    width: bounds.maxX - bounds.minX + padding * 2,
+    height: bounds.maxY - bounds.minY + padding * 2,
+  };
+}
+
+// Render to an offscreen canvas for export (returns data URL)
+function renderToImage(options: {
+  mode: 'full' | 'visible';
+  scale: number;
+  format: 'png' | 'jpeg';
+  quality?: number;
+}): string | null {
+  if (!renderedRoot.value) return null;
+
+  const { mode, scale, format, quality = 0.92 } = options;
+
+  // Create offscreen canvas
+  const offscreen = document.createElement('canvas');
+  const offCtx = offscreen.getContext('2d');
+  if (!offCtx) return null;
+
+  let exportWidth: number;
+  let exportHeight: number;
+  let offsetX: number;
+  let offsetY: number;
+  let exportZoom: number;
+
+  if (mode === 'full') {
+    // Render entire mind map
+    const bounds = getContentBounds(50);
+    exportWidth = bounds.width * scale;
+    exportHeight = bounds.height * scale;
+    offsetX = -bounds.minX;
+    offsetY = -bounds.minY;
+    exportZoom = scale;
+  } else {
+    // Render visible area
+    exportWidth = canvasWidth.value * scale;
+    exportHeight = canvasHeight.value * scale;
+    offsetX = store.viewState.panX;
+    offsetY = store.viewState.panY;
+    exportZoom = store.viewState.zoom * scale;
+  }
+
+  offscreen.width = exportWidth;
+  offscreen.height = exportHeight;
+
+  // Fill background with theme color
+  offCtx.fillStyle = colors.value.background || canvasBackground.value;
+  offCtx.fillRect(0, 0, exportWidth, exportHeight);
+
+  // Apply transforms
+  offCtx.save();
+  if (mode === 'full') {
+    offCtx.scale(exportZoom, exportZoom);
+    offCtx.translate(offsetX, offsetY);
+  } else {
+    offCtx.translate(exportWidth / 2, exportHeight / 2);
+    offCtx.scale(exportZoom, exportZoom);
+    offCtx.translate(-canvasWidth.value / 2 + offsetX, -canvasHeight.value / 2 + offsetY);
+  }
+
+  // Draw all content
+  drawConnections(offCtx, renderedRoot.value);
+  drawRelationships(offCtx);
+  drawBoundaries(offCtx);
+  drawNodes(offCtx, renderedRoot.value);
+
+  // Draw floating topics as mini mind maps (for minimap)
+  store.floatingTopics.forEach(topic => {
+    if (topic.position) {
+      const floatingRendered = layoutNodes(topic, 'mindmap', {
+        centerX: topic.position.x + 60,
+        centerY: topic.position.y + 20,
+        startLevel: 1,
+      });
+      drawConnections(offCtx, floatingRendered);
+      drawNodes(offCtx, floatingRendered);
+    }
+  });
+
+  // Draw floating cliparts
+  store.floatingCliparts.forEach(clipart => {
+    drawFloatingClipart(offCtx, clipart);
+  });
+
+  offCtx.restore();
+
+  // Return as data URL
+  const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+  return offscreen.toDataURL(mimeType, quality);
+}
+
 // Expose canvas dimensions, canvas element and render function for parent components
 defineExpose({
   canvasWidth,
   canvasHeight,
   canvasRef,
   render,
+  fitToView,
+  getContentBounds,
+  renderToImage,
 });
 
 function finishEditing() {
@@ -1663,6 +2358,18 @@ function handleKeyDown(e: KeyboardEvent) {
           }
         }
         render();
+      }
+      break;
+
+    case 'g':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        // Add boundary to selected nodes
+        const selectedIds = store.canvasState.selectedNodeIds;
+        if (selectedIds.length > 0) {
+          store.addBoundary(selectedIds, '', 'rounded');
+          render();
+        }
       }
       break;
 
@@ -1999,6 +2706,14 @@ watch(
     render();
   },
   { deep: true }
+);
+
+// Watch theme changes to re-render canvas with correct background
+watch(
+  isDark,
+  () => {
+    render();
+  }
 );
 </script>
 

@@ -218,10 +218,10 @@ function highlightMatch(text: string): string {
   flex-direction: column;
   width: 300px;
   max-height: 400px;
-  background: rgba(30, 30, 30, 0.98);
+  background: var(--bg-panel);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-primary);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -231,11 +231,11 @@ function highlightMatch(text: string): string {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .search-icon {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -243,13 +243,13 @@ function highlightMatch(text: string): string {
   flex: 1;
   background: transparent;
   border: none;
-  color: white;
+  color: var(--text-primary);
   font-size: 14px;
   outline: none;
 }
 
 .search-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted);
 }
 
 .clear-btn {
@@ -259,13 +259,13 @@ function highlightMatch(text: string): string {
   width: 22px;
   height: 22px;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   transition: all 0.15s;
 }
 
 .clear-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 /* Options */
@@ -274,7 +274,7 @@ function highlightMatch(text: string): string {
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .option {
@@ -282,7 +282,7 @@ function highlightMatch(text: string): string {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   cursor: pointer;
 }
 
@@ -292,7 +292,7 @@ function highlightMatch(text: string): string {
 
 .results-count {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 /* Navigation */
@@ -302,7 +302,7 @@ function highlightMatch(text: string): string {
   justify-content: center;
   gap: 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .nav-btn {
@@ -312,18 +312,18 @@ function highlightMatch(text: string): string {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   transition: all 0.15s;
 }
 
 .nav-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .nav-position {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-tertiary);
   min-width: 60px;
   text-align: center;
 }
@@ -346,23 +346,24 @@ function highlightMatch(text: string): string {
 }
 
 .empty-icon {
-  color: rgba(255, 255, 255, 0.2);
+  color: var(--text-muted);
+  opacity: 0.5;
 }
 
 .empty-state span {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 .result-item {
   padding: 10px 16px;
   cursor: pointer;
   transition: background 0.15s;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-secondary);
 }
 
 .result-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .result-item.active {
@@ -371,7 +372,7 @@ function highlightMatch(text: string): string {
 
 .result-text {
   font-size: 13px;
-  color: white;
+  color: var(--text-primary);
   margin-bottom: 4px;
 }
 
@@ -384,18 +385,19 @@ function highlightMatch(text: string): string {
 
 .result-path {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .path-segment {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 .path-separator {
-  color: rgba(255, 255, 255, 0.2);
+  color: var(--text-muted);
+  opacity: 0.5;
   margin: 0 4px;
 }
 
@@ -409,11 +411,11 @@ function highlightMatch(text: string): string {
 }
 
 .results-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   border-radius: 4px;
 }
 
 .results-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--text-muted);
 }
 </style>

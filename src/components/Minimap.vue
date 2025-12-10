@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
 import { layoutNodes, getAllRenderedNodes, getBoundingBox } from '../layouts';
 import type { RenderedNode } from '../types';
+import { useTheme } from '../composables/useTheme';
 
 const props = defineProps<{
   canvasWidth: number;
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useMindMapStore();
+const { isDark, canvasBackground } = useTheme();
 const minimapRef = ref<HTMLCanvasElement | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
 const ctx = ref<CanvasRenderingContext2D | null>(null);
@@ -84,6 +86,7 @@ const viewport = computed(() => {
 let cachedNodeImageData: ImageData | null = null;
 let lastMapUpdateTime = 0;
 let lastStructure = '';
+let lastThemeIsDark = isDark.value;
 
 function renderNodes() {
   if (!ctx.value || !minimapRef.value || !minimapData.value) return;
@@ -95,8 +98,8 @@ function renderNodes() {
   // Clear
   c.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw background - match the dark theme
-  c.fillStyle = 'rgba(30, 41, 59, 0.95)';
+  // Draw background - match the current theme
+  c.fillStyle = canvasBackground.value;
   c.fillRect(0, 0, canvas.width, canvas.height);
 
   // Draw nodes
@@ -115,13 +118,15 @@ function render() {
 
   const c = ctx.value;
 
-  // Check if we need to re-render nodes (map changed)
+  // Check if we need to re-render nodes (map changed or theme changed)
   const currentMapTime = store.currentMap.updatedAt;
   const currentStructure = store.structure;
+  const currentThemeIsDark = isDark.value;
 
-  if (!cachedNodeImageData || currentMapTime !== lastMapUpdateTime || currentStructure !== lastStructure) {
+  if (!cachedNodeImageData || currentMapTime !== lastMapUpdateTime || currentStructure !== lastStructure || currentThemeIsDark !== lastThemeIsDark) {
     lastMapUpdateTime = currentMapTime;
     lastStructure = currentStructure;
+    lastThemeIsDark = currentThemeIsDark;
     renderNodes();
   } else {
     // Just restore cached nodes
@@ -208,7 +213,7 @@ onMounted(() => {
     const dpr = window.devicePixelRatio || 1;
     minimapRef.value.width = MINIMAP_WIDTH * dpr;
     minimapRef.value.height = MINIMAP_HEIGHT * dpr;
-    ctx.value = minimapRef.value.getContext('2d');
+    ctx.value = minimapRef.value.getContext('2d', { willReadFrequently: true });
     if (ctx.value) {
       ctx.value.scale(dpr, dpr);
     }
@@ -233,6 +238,7 @@ watchEffect(() => {
   void props.canvasWidth;
   void props.canvasHeight;
   void props.visible;
+  void isDark.value; // Re-render on theme change
 
   // Render immediately
   render();
@@ -264,13 +270,11 @@ watchEffect(() => {
   overflow: hidden;
   cursor: crosshair;
   user-select: none;
-  background: rgba(30, 30, 30, 0.98);
+  background: var(--bg-panel);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    0 2px 8px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-primary);
+  box-shadow: var(--shadow-lg);
 }
 
 .minimap-canvas {

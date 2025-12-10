@@ -1,5 +1,6 @@
-import type { MindMap, MindMapNode, Marker } from '../types';
+import type { MindMap, MindMapNode, Marker, Summary, StructureType } from '../types';
 import JSZip from 'jszip';
+import { getDefaultTheme } from '../themes';
 
 // ============================================
 // JSON Export/Import
@@ -26,9 +27,23 @@ interface XMindTopic {
   id: string;
   class?: string;
   title: string;
+  structureClass?: string;  // Node-level structure override (e.g., 'org.xmind.ui.fishbone.rightHeaded')
+  position?: {
+    x: number;
+    y: number;
+  };
   children?: {
     attached?: XMindTopic[];
+    detached?: XMindTopic[];  // Floating topics in XMind
+    floating?: XMindTopic[];  // Alternative name for floating topics
+    summary?: XMindTopic[];   // Summary topics (summarize a range of children)
   };
+  // Summary metadata - defines which children are summarized
+  summaries?: Array<{
+    id: string;
+    range: string;       // e.g., "(0,2)" means children 0 to 2
+    topicId: string;     // ID of the summary topic in children.summary
+  }>;
   markers?: Array<{
     markerId: string;
   }>;
@@ -97,7 +112,9 @@ function nodeToXMindTopic(node: MindMapNode): XMindTopic {
 }
 
 // Convert XMind topic to MindMapNode format
-function xmindTopicToNode(topic: XMindTopic): MindMapNode {
+// isRoot: true means this is the root topic - detached children should NOT be added as regular children
+//         (they will be collected separately as floating topics)
+function xmindTopicToNode(topic: XMindTopic, isFloating: boolean = false, isRoot: boolean = false): MindMapNode {
   const node: MindMapNode = {
     id: topic.id || crypto.randomUUID(),
     text: topic.title || 'Untitled',
@@ -106,10 +123,66 @@ function xmindTopicToNode(topic: XMindTopic): MindMapNode {
     labels: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    isFloating: isFloating,
   };
 
+  // Set position for floating topics
+  if (isFloating && topic.position) {
+    node.position = {
+      x: topic.position.x,
+      y: topic.position.y,
+    };
+  }
+
+  // Map XMind structureClass to our structure type
+  if (topic.structureClass) {
+    const structureMap: Record<string, StructureType> = {
+      'org.xmind.ui.fishbone.rightHeaded': 'fishbone',
+      'org.xmind.ui.fishbone.leftHeaded': 'fishbone',
+      'org.xmind.ui.fishbone.NE.normal': 'fishbone',
+      'org.xmind.ui.fishbone.NW.normal': 'fishbone',
+      'org.xmind.ui.fishbone.SE.normal': 'fishbone',
+      'org.xmind.ui.fishbone.SW.normal': 'fishbone',
+      'org.xmind.ui.tree.right': 'tree',
+      'org.xmind.ui.tree.left': 'tree',
+      'org.xmind.ui.logic.right': 'logic',
+      'org.xmind.ui.logic.left': 'logic',
+      'org.xmind.ui.org-chart.down': 'orgchart',
+      'org.xmind.ui.org-chart.up': 'orgchart',
+      'org.xmind.ui.timeline.horizontal': 'timeline',
+      'org.xmind.ui.timeline.vertical': 'timeline',
+      'org.xmind.ui.map.clockwise': 'mindmap',
+      'org.xmind.ui.map.anticlockwise': 'mindmap',
+      'org.xmind.ui.map.unbalanced': 'mindmap',
+    };
+    const mappedStructure = structureMap[topic.structureClass];
+    if (mappedStructure) {
+      node.structure = mappedStructure;
+    }
+  }
+
   if (topic.children?.attached) {
-    node.children = topic.children.attached.map(child => xmindTopicToNode(child));
+    node.children = topic.children.attached.map(child => xmindTopicToNode(child, false, false));
+  }
+
+  // For non-root topics, include detached/floating as regular children
+  // For root topic, detached topics are handled separately as floating topics
+  if (!isRoot) {
+    if (topic.children?.detached) {
+      const detachedChildren = topic.children.detached.map(child => xmindTopicToNode(child, false, false));
+      node.children = [...node.children, ...detachedChildren];
+    }
+
+    if (topic.children?.floating) {
+      const floatingChildren = topic.children.floating.map(child => xmindTopicToNode(child, false, false));
+      node.children = [...node.children, ...floatingChildren];
+    }
+  }
+
+  // Always include summary topics as children (they summarize ranges of other children)
+  if (topic.children?.summary) {
+    const summaryChildren = topic.children.summary.map(child => xmindTopicToNode(child, false, false));
+    node.children = [...node.children, ...summaryChildren];
   }
 
   if (topic.markers) {
@@ -158,6 +231,118 @@ function xmindTopicToNode(topic: XMindTopic): MindMapNode {
   }
 
   return node;
+}
+
+// Collect all floating topics from XMind structure
+function collectFloatingTopics(rootTopic: XMindTopic): MindMapNode[] {
+  const floatingTopics: MindMapNode[] = [];
+
+  // Collect detached topics from root level as floating topics
+  if (rootTopic.children?.detached) {
+    for (const detached of rootTopic.children.detached) {
+      const floatingNode = xmindTopicToNode(detached, true);
+      // XMind uses relative positions, we'll use absolute positioning
+      if (detached.position) {
+        floatingNode.position = {
+          x: detached.position.x + 400, // Offset from center
+          y: detached.position.y,
+        };
+      } else {
+        // Default position for floating topics without position
+        floatingNode.position = {
+          x: 400 + floatingTopics.length * 150,
+          y: -200 + floatingTopics.length * 80,
+        };
+      }
+      floatingTopics.push(floatingNode);
+    }
+  }
+
+  // Also handle 'floating' type
+  if (rootTopic.children?.floating) {
+    for (const floating of rootTopic.children.floating) {
+      const floatingNode = xmindTopicToNode(floating, true);
+      if (floating.position) {
+        floatingNode.position = {
+          x: floating.position.x + 400,
+          y: floating.position.y,
+        };
+      } else {
+        floatingNode.position = {
+          x: 400 + floatingTopics.length * 150,
+          y: -200 + floatingTopics.length * 80,
+        };
+      }
+      floatingTopics.push(floatingNode);
+    }
+  }
+
+  return floatingTopics;
+}
+
+// Build a lookup map of all node IDs to node text for relationships
+function buildNodeIdMap(rootNode: MindMapNode, floatingTopics: MindMapNode[]): Map<string, string> {
+  const idMap = new Map<string, string>();
+
+  function traverse(node: MindMapNode) {
+    idMap.set(node.id, node.text);
+    for (const child of node.children) {
+      traverse(child);
+    }
+  }
+
+  traverse(rootNode);
+  for (const floating of floatingTopics) {
+    traverse(floating);
+  }
+
+  return idMap;
+}
+
+// Collect all summaries from XMind topic tree
+function collectSummaries(rootTopic: XMindTopic): Summary[] {
+  const summaries: Summary[] = [];
+
+  function traverse(topic: XMindTopic) {
+    // Check if this topic has summaries
+    if (topic.summaries && topic.summaries.length > 0 && topic.children?.summary) {
+      for (const summaryMeta of topic.summaries) {
+        // Parse range like "(0,2)" to get start and end indices
+        const rangeMatch = summaryMeta.range.match(/\((\d+),(\d+)\)/);
+        if (rangeMatch && rangeMatch[1] !== undefined && rangeMatch[2] !== undefined) {
+          const rangeStart = parseInt(rangeMatch[1], 10);
+          const rangeEnd = parseInt(rangeMatch[2], 10);
+
+          // Find the summary topic
+          const summaryTopic = topic.children.summary.find(s => s.id === summaryMeta.topicId);
+          if (summaryTopic) {
+            summaries.push({
+              id: summaryMeta.id,
+              parentNodeId: topic.id,
+              rangeStart,
+              rangeEnd,
+              topicId: summaryMeta.topicId,
+              topicText: summaryTopic.title || 'Summary',
+            });
+          }
+        }
+      }
+    }
+
+    // Recurse into children
+    for (const child of topic.children?.attached || []) {
+      traverse(child);
+    }
+    for (const child of topic.children?.detached || []) {
+      traverse(child);
+    }
+    for (const child of topic.children?.floating || []) {
+      traverse(child);
+    }
+  }
+
+  traverse(rootTopic);
+  return summaries;
 }
 
 export async function exportToXMind(map: MindMap): Promise<Blob> {
@@ -258,40 +443,91 @@ export async function importFromXMind(file: File): Promise<MindMap> {
       throw new Error('Invalid XMind file: missing root topic.');
     }
 
-    const rootNode = xmindTopicToNode(sheet.rootTopic);
+    // Convert root topic (only attached children for main tree)
+    // Pass isRoot=true so detached children are NOT added as regular children
+    const rootNode = xmindTopicToNode(sheet.rootTopic, false, true);
+
+    // Collect floating topics (detached at root level)
+    const floatingTopics = collectFloatingTopics(sheet.rootTopic);
+
+    // Build node ID map for relationship validation
+    const nodeIdMap = buildNodeIdMap(rootNode, floatingTopics);
+
+    // Find orphaned node IDs from relationships and create placeholder nodes
+    const orphanedNodeIds = new Set<string>();
+    for (const rel of (sheet.relationships || [])) {
+      if (!nodeIdMap.has(rel.end1Id)) {
+        orphanedNodeIds.add(rel.end1Id);
+      }
+      if (!nodeIdMap.has(rel.end2Id)) {
+        orphanedNodeIds.add(rel.end2Id);
+      }
+    }
+
+    // Create placeholder floating topics for orphaned nodes
+    // Position them in a grid to the right of the main map
+    let orphanIndex = 0;
+    const orphanedNodes: MindMapNode[] = [];
+    for (const orphanId of orphanedNodeIds) {
+      const row = Math.floor(orphanIndex / 3);
+      const col = orphanIndex % 3;
+      const placeholderNode: MindMapNode = {
+        id: orphanId,
+        text: `Orphaned Node ${orphanIndex + 1}`,
+        children: [],
+        markers: [{
+          id: 'symbol-question',
+          category: 'symbol',
+          value: 'question',
+          color: '#f59e0b',
+        }],
+        labels: [{
+          id: 'orphan-label',
+          text: 'Orphaned',
+          color: '#ef4444',
+        }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isFloating: true,
+        position: {
+          x: 600 + col * 180,
+          y: -300 + row * 100,
+        },
+      };
+      orphanedNodes.push(placeholderNode);
+      nodeIdMap.set(orphanId, placeholderNode.text);
+      orphanIndex++;
+    }
+
+    // Combine all floating topics
+    const allFloatingTopics = [...floatingTopics, ...orphanedNodes];
+
+    // Now all relationships should be valid
+    const allRelationships = (sheet.relationships || []).map(r => ({
+      id: r.id,
+      sourceId: r.end1Id,
+      targetId: r.end2Id,
+      label: r.title,
+      style: 'solid' as const,
+      color: '#3b82f6',
+      curvature: 0.3,
+      startArrow: false,
+      endArrow: true,
+    }));
+
+    // Collect summaries from XMind structure
+    const allSummaries = collectSummaries(sheet.rootTopic);
 
     const map: MindMap = {
       id: sheet.id || crypto.randomUUID(),
-      name: sheet.title || 'Imported Map',
+      name: sheet.title || sheet.rootTopic.title || 'Imported Map',
       root: rootNode,
-      floatingTopics: [],
+      floatingTopics: allFloatingTopics,
       floatingCliparts: [],
-      relationships: sheet.relationships?.map(r => ({
-        id: r.id,
-        sourceId: r.end1Id,
-        targetId: r.end2Id,
-        label: r.title,
-        style: 'solid' as const,
-        color: '#3b82f6',
-        curvature: 0.3,
-        startArrow: false,
-        endArrow: true,
-      })) || [],
+      relationships: allRelationships,
       boundaries: [],
-      summaries: [],
-      theme: {
-        id: 'default',
-        name: 'Default',
-        colors: {
-          background: '#ffffff',
-          rootNode: '#1e40af',
-          branches: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'],
-          text: '#1f2937',
-          lines: '#94a3b8',
-        },
-        handDrawn: false,
-        rainbowBranches: true,
-      },
+      summaries: allSummaries,
+      theme: getDefaultTheme(),
       structure: 'mindmap',
       zoom: 1,
       panX: 0,

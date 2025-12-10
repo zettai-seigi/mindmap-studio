@@ -237,13 +237,13 @@ const flatNodes = computed(() => flattenTree(store.root));
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: rgba(30, 30, 30, 0.98);
-  color: white;
+  background: var(--bg-sidebar);
+  color: var(--text-primary);
 }
 
 .outline-header {
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -252,12 +252,12 @@ const flatNodes = computed(() => flattenTree(store.root));
 .outline-title {
   font-size: 16px;
   font-weight: 600;
-  color: white;
+  color: var(--text-primary);
 }
 
 .outline-hint {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 .outline-content {
@@ -279,7 +279,7 @@ const flatNodes = computed(() => flattenTree(store.root));
 }
 
 .outline-node:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
 }
 
 .outline-node.selected {
@@ -297,14 +297,14 @@ const flatNodes = computed(() => flattenTree(store.root));
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   transition: all 0.15s ease;
   flex-shrink: 0;
 }
 
 .expand-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .expand-placeholder {
@@ -327,7 +327,7 @@ const flatNodes = computed(() => flattenTree(store.root));
 
 .node-text {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -336,12 +336,12 @@ const flatNodes = computed(() => flattenTree(store.root));
 
 .edit-input {
   width: 100%;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-secondary);
   border: 1px solid rgba(59, 130, 246, 0.5);
   border-radius: 4px;
   padding: 4px 8px;
   font-size: 14px;
-  color: white;
+  color: var(--text-primary);
   outline: none;
 }
 
@@ -382,13 +382,13 @@ const flatNodes = computed(() => flattenTree(store.root));
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   transition: all 0.15s ease;
 }
 
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .action-btn.delete:hover {
@@ -406,11 +406,11 @@ const flatNodes = computed(() => flattenTree(store.root));
 }
 
 .outline-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   border-radius: 4px;
 }
 
 .outline-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--text-muted);
 }
 </style>

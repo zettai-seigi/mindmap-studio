@@ -3,8 +3,10 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { useMindMapStore } from '../stores/mindmap';
 import {
   FileText, Save, FolderOpen, Undo, Redo, Plus, Trash2, Link,
-  Sparkles, PanelRight, LayoutGrid, ChevronDown
+  Sparkles, PanelRight, LayoutGrid, ChevronDown, Sun, Moon, Monitor,
+  Group, Square, Cloud, Waves, X, ArrowDownAZ, ClipboardPaste
 } from 'lucide-vue-next';
+import { useTheme } from '../composables/useTheme';
 import {
   exportToJSON,
   importFromJSON,
@@ -13,7 +15,6 @@ import {
   downloadFile,
   openFilePicker,
   readFileAsText,
-  exportToPNG,
   exportToSVG,
   exportToPDF,
   exportToMarkdown,
@@ -25,23 +26,29 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'toggle-sidebar': [];
+  'open-export-dialog': [];
 }>();
 
 const store = useMindMapStore();
+const { themeMode, cycleTheme } = useTheme();
 
 // Dropdown states
 const showSaveMenu = ref(false);
 const showOpenMenu = ref(false);
+const showGroupMenu = ref(false);
 const saveMenuPosition = ref({ top: 0, left: 0 });
 const openMenuPosition = ref({ top: 0, left: 0 });
+const groupMenuPosition = ref({ top: 0, left: 0 });
 
 // Button refs
 const saveButtonRef = ref<HTMLElement | null>(null);
 const openButtonRef = ref<HTMLElement | null>(null);
+const groupButtonRef = ref<HTMLElement | null>(null);
 
 // Toggle dropdowns with position calculation
 async function toggleSaveMenu() {
   showOpenMenu.value = false;
+  showGroupMenu.value = false;
   showSaveMenu.value = !showSaveMenu.value;
   if (showSaveMenu.value && saveButtonRef.value) {
     await nextTick();
@@ -55,11 +62,26 @@ async function toggleSaveMenu() {
 
 async function toggleOpenMenu() {
   showSaveMenu.value = false;
+  showGroupMenu.value = false;
   showOpenMenu.value = !showOpenMenu.value;
   if (showOpenMenu.value && openButtonRef.value) {
     await nextTick();
     const rect = openButtonRef.value.getBoundingClientRect();
     openMenuPosition.value = {
+      top: rect.bottom + 4,
+      left: rect.left
+    };
+  }
+}
+
+async function toggleGroupMenu() {
+  showSaveMenu.value = false;
+  showOpenMenu.value = false;
+  showGroupMenu.value = !showGroupMenu.value;
+  if (showGroupMenu.value && groupButtonRef.value) {
+    await nextTick();
+    const rect = groupButtonRef.value.getBoundingClientRect();
+    groupMenuPosition.value = {
       top: rect.bottom + 4,
       left: rect.left
     };
@@ -72,6 +94,7 @@ function handleClickOutside(e: MouseEvent) {
   if (!target.closest('.dropdown-container') && !target.closest('.dropdown-menu-fixed')) {
     showSaveMenu.value = false;
     showOpenMenu.value = false;
+    showGroupMenu.value = false;
   }
 }
 
@@ -134,15 +157,9 @@ async function saveAsXMind() {
   }
 }
 
-function saveAsPNG() {
+function openExportDialog() {
   showSaveMenu.value = false;
-  if (!props.canvasRef) {
-    alert('Canvas not available for export');
-    return;
-  }
-  const mapData = store.getMapData();
-  const filename = `${mapData.name.replace(/[^a-z0-9]/gi, '_')}.png`;
-  exportToPNG(props.canvasRef, filename);
+  emit('open-export-dialog');
 }
 
 function saveAsSVG() {
@@ -210,6 +227,72 @@ async function openXMind() {
   }
 }
 
+// Group/Boundary functions
+type BoundaryShape = 'rectangle' | 'rounded' | 'cloud' | 'wave';
+
+function addBoundary(shape: BoundaryShape) {
+  showGroupMenu.value = false;
+  const selectedIds = store.canvasState.selectedNodeIds;
+  if (selectedIds.length === 0) {
+    alert('Please select one or more nodes to group');
+    return;
+  }
+  store.addBoundary(selectedIds, '', shape);
+}
+
+function removeBoundaryFromSelected() {
+  showGroupMenu.value = false;
+  const selectedIds = store.canvasState.selectedNodeIds;
+  if (selectedIds.length === 0) return;
+
+  // Find boundaries that contain any of the selected nodes
+  const boundaries = store.boundaries;
+  boundaries.forEach(boundary => {
+    if (selectedIds.some(id => boundary.nodeIds.includes(id))) {
+      store.removeBoundary(boundary.id);
+    }
+  });
+}
+
+// Check if selected nodes have a boundary
+function hasSelectedBoundary(): boolean {
+  const selectedIds = store.canvasState.selectedNodeIds;
+  if (selectedIds.length === 0) return false;
+  return store.boundaries.some(b => selectedIds.some(id => b.nodeIds.includes(id)));
+}
+
+// Sort children alphabetically
+function handleSortAlphabetically() {
+  const selectedId = store.canvasState.selectedNodeIds[0];
+  if (selectedId) {
+    store.sortChildrenAlphabetically(selectedId);
+  }
+}
+
+// Check if selected node has children to sort
+function canSortChildren(): boolean {
+  const selectedId = store.canvasState.selectedNodeIds[0];
+  if (!selectedId) return false;
+  const node = store.findNodeById(selectedId);
+  return node !== null && node.children.length >= 2;
+}
+
+// New map from clipboard
+async function newFromClipboard() {
+  showOpenMenu.value = false;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text.trim()) {
+      store.importFromClipboardText(text);
+    } else {
+      alert('Clipboard is empty');
+    }
+  } catch (error) {
+    console.error('Failed to read clipboard:', error);
+    alert('Failed to read clipboard. Please make sure you have granted clipboard permissions.');
+  }
+}
+
 </script>
 
 <template>
@@ -222,7 +305,7 @@ async function openXMind() {
       <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-md flex items-center justify-center">
         <span class="text-white font-bold text-xs">M</span>
       </div>
-      <span class="text-[13px] font-medium text-white/90 hidden sm:inline">MindMap Studio</span>
+      <span class="logo-text text-[13px] font-medium hidden sm:inline">MindMap Studio</span>
     </div>
 
     <!-- Divider -->
@@ -277,6 +360,12 @@ async function openXMind() {
           <span class="dropdown-icon">X</span>
           <span>Open XMind (.xmind)</span>
         </button>
+        <div class="dropdown-divider" />
+        <button class="dropdown-item" @click="newFromClipboard">
+          <ClipboardPaste :size="14" class="dropdown-icon-svg" />
+          <span>New from Clipboard</span>
+          <span class="dropdown-shortcut">⌘⇧V</span>
+        </button>
       </div>
 
       <div
@@ -296,9 +385,9 @@ async function openXMind() {
         </button>
         <div class="dropdown-divider" />
         <div class="dropdown-section">Export Image</div>
-        <button class="dropdown-item" @click="saveAsPNG">
-          <span class="dropdown-icon img">PNG</span>
-          <span>Export as PNG</span>
+        <button class="dropdown-item" @click="openExportDialog">
+          <span class="dropdown-icon img">IMG</span>
+          <span>Export as Image...</span>
         </button>
         <button class="dropdown-item" @click="saveAsSVG">
           <span class="dropdown-icon img">SVG</span>
@@ -313,6 +402,42 @@ async function openXMind() {
         <button class="dropdown-item" @click="saveAsMarkdown">
           <span class="dropdown-icon">MD</span>
           <span>Export as Markdown</span>
+        </button>
+      </div>
+
+      <!-- Group Menu -->
+      <div
+        v-if="showGroupMenu"
+        class="dropdown-menu-fixed"
+        :style="{ top: groupMenuPosition.top + 'px', left: groupMenuPosition.left + 'px' }"
+        @click.stop
+      >
+        <div class="dropdown-section">Add Boundary</div>
+        <button class="dropdown-item" @click="addBoundary('rounded')">
+          <Square :size="14" class="dropdown-icon-svg" style="border-radius: 3px;" />
+          <span>Rounded Rectangle</span>
+          <span class="dropdown-shortcut">⌘G</span>
+        </button>
+        <button class="dropdown-item" @click="addBoundary('rectangle')">
+          <Square :size="14" class="dropdown-icon-svg" />
+          <span>Rectangle</span>
+        </button>
+        <button class="dropdown-item" @click="addBoundary('cloud')">
+          <Cloud :size="14" class="dropdown-icon-svg" />
+          <span>Cloud</span>
+        </button>
+        <button class="dropdown-item" @click="addBoundary('wave')">
+          <Waves :size="14" class="dropdown-icon-svg" />
+          <span>Wave</span>
+        </button>
+        <div class="dropdown-divider" />
+        <button
+          class="dropdown-item"
+          :disabled="!hasSelectedBoundary()"
+          @click="removeBoundaryFromSelected"
+        >
+          <X :size="14" class="dropdown-icon-svg" />
+          <span>Remove Boundary</span>
         </button>
       </div>
     </Teleport>
@@ -354,9 +479,35 @@ async function openXMind() {
       <button class="toolbar-btn" title="Create Relationship" @click="handleCreateRelationship">
         <Link :size="16" />
       </button>
+      <button
+        class="toolbar-btn"
+        title="Sort Children A-Z"
+        :disabled="!canSortChildren()"
+        @click="handleSortAlphabetically"
+      >
+        <ArrowDownAZ :size="16" />
+      </button>
       <button class="toolbar-btn" title="Reset Layout" @click="handleResetLayout">
         <LayoutGrid :size="16" />
       </button>
+    </div>
+
+    <!-- Divider -->
+    <div class="divider" />
+
+    <!-- Group/Boundary -->
+    <div class="btn-group">
+      <div class="dropdown-container">
+        <button
+          ref="groupButtonRef"
+          class="toolbar-btn dropdown-trigger"
+          title="Group (⌘G)"
+          @click.stop="toggleGroupMenu"
+        >
+          <Group :size="16" />
+          <ChevronDown :size="10" class="dropdown-arrow" />
+        </button>
+      </div>
     </div>
 
     <!-- Divider -->
@@ -373,6 +524,17 @@ async function openXMind() {
 
     <!-- Right side controls -->
     <div class="btn-group">
+      <!-- Theme Toggle -->
+      <button
+        class="toolbar-btn theme-btn"
+        :title="`Theme: ${themeMode} (click to change)`"
+        @click="cycleTheme"
+      >
+        <Sun v-if="themeMode === 'light'" :size="16" />
+        <Moon v-else-if="themeMode === 'dark'" :size="16" />
+        <Monitor v-else :size="16" />
+      </button>
+
       <button
         class="toolbar-btn"
         title="Toggle Sidebar"
@@ -386,10 +548,10 @@ async function openXMind() {
 
 <style scoped>
 .toolbar {
-  background: rgba(40, 40, 40, 0.95);
+  background: var(--bg-toolbar);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
   position: relative;
   z-index: 100;
 }
@@ -397,7 +559,7 @@ async function openXMind() {
 .divider {
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   margin: 0 8px;
 }
 
@@ -405,7 +567,7 @@ async function openXMind() {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--border-secondary);
   border-radius: 6px;
   padding: 2px;
 }
@@ -418,17 +580,17 @@ async function openXMind() {
   width: 28px;
   height: 28px;
   border-radius: 5px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-secondary);
   transition: all 0.15s ease;
 }
 
 .toolbar-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .toolbar-btn:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-primary);
 }
 
 .toolbar-btn:disabled {
@@ -446,6 +608,18 @@ async function openXMind() {
 .ai-btn:hover {
   background: rgba(147, 51, 234, 0.3);
   color: #d8b4fe;
+}
+
+.theme-btn {
+  color: var(--text-tertiary);
+}
+
+.theme-btn:hover {
+  color: #f59e0b;
+}
+
+.logo-text {
+  color: var(--text-primary);
 }
 
 /* Dropdown */
@@ -501,13 +675,13 @@ async function openXMind() {
 .dropdown-menu-fixed {
   position: fixed;
   min-width: 180px;
-  background: rgba(40, 40, 40, 0.98);
+  background: var(--bg-panel);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   padding: 4px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
   z-index: 10000;
 }
 
@@ -518,15 +692,15 @@ async function openXMind() {
   width: 100%;
   padding: 8px 12px;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
   font-size: 13px;
   text-align: left;
   transition: all 0.15s ease;
 }
 
 .dropdown-menu-fixed .dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .dropdown-menu-fixed .dropdown-icon {
@@ -551,7 +725,7 @@ async function openXMind() {
 .dropdown-menu-fixed .dropdown-section {
   font-size: 10px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 8px 12px 4px;
@@ -559,7 +733,29 @@ async function openXMind() {
 
 .dropdown-menu-fixed .dropdown-divider {
   height: 1px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-primary);
   margin: 4px 8px;
+}
+
+.dropdown-menu-fixed .dropdown-icon-svg {
+  width: 20px;
+  flex-shrink: 0;
+  color: #60a5fa;
+}
+
+.dropdown-menu-fixed .dropdown-shortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.dropdown-menu-fixed .dropdown-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dropdown-menu-fixed .dropdown-item:disabled:hover {
+  background: transparent;
 }
 </style>

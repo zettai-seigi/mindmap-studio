@@ -88,6 +88,13 @@ function deleteRelationship(relId: string) {
   store.removeRelationship(relId);
 }
 
+// Select a relationship (from sidebar click)
+function selectRelationship(relId: string) {
+  // Clear node selection and select the relationship
+  store.canvasState.selectedNodeIds = [];
+  store.canvasState.selectedRelationshipId = relId;
+}
+
 // Get relationships for selected node
 const nodeRelationships = computed(() => {
   if (!selectedNode.value) return [];
@@ -192,7 +199,9 @@ const nodeRelationships = computed(() => {
             v-for="rel in relationships"
             :key="rel.id"
             class="mini-rel-item"
+            :class="{ selected: selectedRelationship?.id === rel.id }"
             :style="{ borderLeftColor: rel.color }"
+            @click="selectRelationship(rel.id)"
           >
             <span class="mini-source">{{ getNodeText(rel.sourceId) }}</span>
             <ArrowRight :size="10" class="mini-arrow" />
@@ -381,11 +390,27 @@ const nodeRelationships = computed(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 6px 8px;
   background: rgba(255, 255, 255, 0.02);
   border-radius: 4px;
   border-left: 2px solid;
   font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mini-rel-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mini-rel-item.selected {
+  background: rgba(59, 130, 246, 0.2);
+  border-left-color: #3b82f6 !important;
+}
+
+.mini-rel-item.selected .mini-source,
+.mini-rel-item.selected .mini-target {
+  color: #60a5fa;
 }
 
 .mini-source,

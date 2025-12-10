@@ -186,6 +186,7 @@ export interface Boundary {
   id: string;
   nodeIds: string[];
   label?: string;
+  labelAlign?: 'left' | 'center' | 'right';  // Label alignment on top edge
   shape: 'rectangle' | 'rounded' | 'cloud' | 'wave';
   color: string;
   backgroundColor: string;
@@ -194,9 +195,14 @@ export interface Boundary {
 
 export interface Summary {
   id: string;
-  nodeIds: string[];
-  summaryNodeId: string;
-  position: 'right' | 'left' | 'top' | 'bottom';
+  parentNodeId: string;      // The parent node whose children are being summarized
+  rangeStart: number;        // Start index of children to summarize
+  rangeEnd: number;          // End index of children to summarize (inclusive)
+  topicId: string;           // The summary topic node ID
+  topicText: string;         // The summary topic text (for display)
+  color?: string;            // Bracket and label color
+  backgroundColor?: string;  // Label background color
+  bracketStyle?: 'curved' | 'straight' | 'brace';  // Bracket style
 }
 
 export interface FloatingClipart {
@@ -214,13 +220,33 @@ export interface FloatingClipart {
 export interface MapTheme {
   id: string;
   name: string;
+  category: 'default' | 'business' | 'colorful' | 'minimal' | 'dark';
   colors: {
     background: string;
     rootNode: string;
+    rootNodeText: string;
     branches: string[];
-    text: string;
+    branchText: string;
     lines: string;
+    subTopicBg: string;
+    subTopicText: string;
   };
+  fonts: {
+    root: string;
+    rootSize: number;
+    rootWeight: number;
+    branch: string;
+    branchSize: number;
+    branchWeight: number;
+    subTopic: string;
+    subTopicSize: number;
+    subTopicWeight: number;
+  };
+  rootShape: 'rounded' | 'rectangle' | 'ellipse' | 'diamond' | 'parallelogram';
+  branchShape: 'rounded' | 'rectangle' | 'ellipse' | 'underline' | 'none';
+  subTopicShape?: 'rounded' | 'rectangle' | 'ellipse' | 'underline' | 'none'; // Optional, defaults to rounded
+  lineStyle: 'curved' | 'straight' | 'angular' | 'tapered';
+  lineWidth: number;
   handDrawn: boolean;
   rainbowBranches: boolean;
 }
@@ -275,6 +301,8 @@ export interface CanvasState {
   dragOffset: Position | null;
   selectionBox: { start: Position; end: Position } | null;
   selectedRelationshipId: string | null;
+  selectedBoundaryId: string | null;
+  selectedSummaryId: string | null;
   linkMode: {
     active: boolean;
     sourceId: string | null;
