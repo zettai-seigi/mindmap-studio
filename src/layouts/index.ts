@@ -116,66 +116,19 @@ export function layoutMindMap(
 // Direction type for layouts - horizontal (left/right) or vertical (up/down)
 type LayoutDirection = 'left' | 'right' | 'up' | 'down';
 
-function layoutBranch(
+// Layout function signature for structure-specific layouts
+type LayoutChildrenFn = (
+  parentRendered: RenderedNode,
   node: MindMapNode,
-  x: number,
-  y: number,
   direction: LayoutDirection,
   level: number,
   cfg: LayoutConfig,
-  parent: RenderedNode,
   inheritedStructure?: StructureType
-): RenderedNode {
-  // Use manual position if set
-  const finalX = node.position?.x ?? x;
-  const finalY = node.position?.y ?? y;
+) => void;
 
-  // Determine effective structure: node's own structure overrides inherited
-  const effectiveStructure = node.structure || inheritedStructure;
-
-  const rendered: RenderedNode = {
-    node,
-    x: finalX,
-    y: finalY,
-    width: cfg.nodeWidth,
-    height: cfg.nodeHeight,
-    collapsed: node.collapsed || false,
-    level,
-    parent,
-    children: [],
-  };
-
-  if (node.collapsed || node.children.length === 0) {
-    return rendered;
-  }
-
-  // Dispatch to appropriate layout based on effective structure
-  switch (effectiveStructure) {
-    case 'fishbone':
-      layoutChildrenFishbone(rendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'orgchart':
-      layoutChildrenOrgChart(rendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'tree':
-      layoutChildrenTree(rendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'logic':
-      layoutChildrenLogic(rendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'timeline':
-      layoutChildrenTimeline(rendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    default:
-      // Default mind map layout (horizontal branches)
-      layoutChildrenMindMap(rendered, node, direction, level, cfg, effectiveStructure);
-  }
-
-  return rendered;
-}
-
-// Mind Map layout: horizontal branches left/right
-function layoutChildrenMindMap(
+// Horizontal layout: children arranged vertically, positioned left or right of parent
+// Used by: mindmap, tree, logic (they differ only in connection drawing, not positioning)
+function layoutChildrenHorizontal(
   parentRendered: RenderedNode,
   node: MindMapNode,
   direction: LayoutDirection,
@@ -183,28 +136,23 @@ function layoutChildrenMindMap(
   cfg: LayoutConfig,
   inheritedStructure?: StructureType
 ): void {
-  const finalX = parentRendered.x;
-  const finalY = parentRendered.y;
   const hDir = (direction === 'left' || direction === 'right') ? direction : 'right';
-
   const totalHeight = calculateTotalHeight(node.children, cfg, inheritedStructure);
-  let childY = finalY + cfg.nodeHeight / 2 - totalHeight / 2;
+  let childY = parentRendered.y + cfg.nodeHeight / 2 - totalHeight / 2;
 
-  node.children.forEach((child) => {
+  const childX = hDir === 'right'
+    ? parentRendered.x + cfg.nodeWidth + cfg.horizontalGap
+    : parentRendered.x - cfg.horizontalGap - cfg.nodeWidth;
+
+  for (const child of node.children) {
     const childEffectiveStructure = child.structure || inheritedStructure;
     const subtreeHeight = calculateSubtreeHeight(child, cfg, childEffectiveStructure);
-
-    const childX = hDir === 'right'
-      ? finalX + cfg.nodeWidth + cfg.horizontalGap
-      : finalX - cfg.horizontalGap - cfg.nodeWidth;
-
     const childCenterY = childY + subtreeHeight / 2 - cfg.nodeHeight / 2;
 
     const childRendered = layoutBranch(child, childX, childCenterY, hDir, level + 1, cfg, parentRendered, inheritedStructure);
     parentRendered.children.push(childRendered);
-
     childY += subtreeHeight;
-  });
+  }
 }
 
 // Org Chart layout: children below parent (vertical, top-down)
@@ -217,91 +165,22 @@ function layoutChildrenOrgChart(
   inheritedStructure?: StructureType
 ): void {
   const parentCenterX = parentRendered.x + parentRendered.width / 2;
-  const parentBottomY = parentRendered.y + parentRendered.height;
   const vDir: LayoutDirection = (direction === 'up') ? 'up' : 'down';
+  const childY = vDir === 'down'
+    ? parentRendered.y + parentRendered.height + cfg.levelGap
+    : parentRendered.y - cfg.levelGap - cfg.nodeHeight;
 
   const totalWidth = node.children.length * cfg.nodeWidth + (node.children.length - 1) * cfg.horizontalGap;
   let childX = parentCenterX - totalWidth / 2;
 
-  node.children.forEach((child) => {
-    const childY = vDir === 'down'
-      ? parentBottomY + cfg.levelGap
-      : parentRendered.y - cfg.levelGap - cfg.nodeHeight;
-
+  for (const child of node.children) {
     const childRendered = layoutBranch(child, childX, childY, vDir, level + 1, cfg, parentRendered, inheritedStructure);
     parentRendered.children.push(childRendered);
-
     childX += cfg.nodeWidth + cfg.horizontalGap;
-  });
+  }
 }
 
-// Tree layout: children to the right (or left) in a vertical list
-function layoutChildrenTree(
-  parentRendered: RenderedNode,
-  node: MindMapNode,
-  direction: LayoutDirection,
-  level: number,
-  cfg: LayoutConfig,
-  inheritedStructure?: StructureType
-): void {
-  const finalX = parentRendered.x;
-  const finalY = parentRendered.y;
-  const hDir = (direction === 'left' || direction === 'right') ? direction : 'right';
-
-  const totalHeight = calculateTotalHeight(node.children, cfg, inheritedStructure);
-  let childY = finalY + cfg.nodeHeight / 2 - totalHeight / 2;
-
-  node.children.forEach((child) => {
-    const childEffectiveStructure = child.structure || inheritedStructure;
-    const subtreeHeight = calculateSubtreeHeight(child, cfg, childEffectiveStructure);
-
-    const childX = hDir === 'right'
-      ? finalX + cfg.nodeWidth + cfg.horizontalGap
-      : finalX - cfg.horizontalGap - cfg.nodeWidth;
-
-    const childCenterY = childY + subtreeHeight / 2 - cfg.nodeHeight / 2;
-
-    const childRendered = layoutBranch(child, childX, childCenterY, hDir, level + 1, cfg, parentRendered, inheritedStructure);
-    parentRendered.children.push(childRendered);
-
-    childY += subtreeHeight;
-  });
-}
-
-// Logic layout: horizontal flow with elbow connections
-function layoutChildrenLogic(
-  parentRendered: RenderedNode,
-  node: MindMapNode,
-  direction: LayoutDirection,
-  level: number,
-  cfg: LayoutConfig,
-  inheritedStructure?: StructureType
-): void {
-  const finalX = parentRendered.x;
-  const finalY = parentRendered.y;
-  const hDir = (direction === 'left' || direction === 'right') ? direction : 'right';
-
-  const totalHeight = calculateTotalHeight(node.children, cfg, inheritedStructure);
-  let childY = finalY + cfg.nodeHeight / 2 - totalHeight / 2;
-
-  node.children.forEach((child) => {
-    const childEffectiveStructure = child.structure || inheritedStructure;
-    const subtreeHeight = calculateSubtreeHeight(child, cfg, childEffectiveStructure);
-
-    const childX = hDir === 'right'
-      ? finalX + cfg.nodeWidth + cfg.horizontalGap
-      : finalX - cfg.horizontalGap - cfg.nodeWidth;
-
-    const childCenterY = childY + subtreeHeight / 2 - cfg.nodeHeight / 2;
-
-    const childRendered = layoutBranch(child, childX, childCenterY, hDir, level + 1, cfg, parentRendered, inheritedStructure);
-    parentRendered.children.push(childRendered);
-
-    childY += subtreeHeight;
-  });
-}
-
-// Timeline layout: horizontal or vertical timeline
+// Timeline layout: alternating above/below a horizontal line
 function layoutChildrenTimeline(
   parentRendered: RenderedNode,
   node: MindMapNode,
@@ -310,13 +189,13 @@ function layoutChildrenTimeline(
   cfg: LayoutConfig,
   inheritedStructure?: StructureType
 ): void {
+  const TIMELINE_SPACING = 120;
   const parentCenterX = parentRendered.x + parentRendered.width / 2;
   const parentCenterY = parentRendered.y + parentRendered.height / 2;
-  const TIMELINE_SPACING = 120;
 
   node.children.forEach((child, index) => {
-    const childX = parentCenterX + (index + 1) * TIMELINE_SPACING - cfg.nodeWidth / 2;
     const isAbove = index % 2 === 0;
+    const childX = parentCenterX + (index + 1) * TIMELINE_SPACING - cfg.nodeWidth / 2;
     const childY = parentCenterY + (isAbove ? -cfg.levelGap - cfg.nodeHeight : cfg.levelGap);
 
     const childRendered = layoutBranch(child, childX, childY, direction, level + 1, cfg, parentRendered, inheritedStructure);
@@ -324,31 +203,26 @@ function layoutChildrenTimeline(
   });
 }
 
-// Fishbone layout: diagonal ribs alternating above/below
+// Fishbone layout: diagonal ribs alternating above/below spine
 function layoutChildrenFishbone(
   parentRendered: RenderedNode,
   node: MindMapNode,
   direction: LayoutDirection,
   level: number,
   cfg: LayoutConfig,
-  inheritedStructure: StructureType
+  inheritedStructure?: StructureType
 ): void {
   const BONE_SPACING = 35;
   const BONE_ANGLE_X = 40;
-
   const parentCenterX = parentRendered.x + parentRendered.width / 2;
   const parentCenterY = parentRendered.y + parentRendered.height / 2;
-
-  // Direction of fishbone expansion
   const xDir = (direction === 'left') ? 1 : -1;
 
   node.children.forEach((child, index) => {
     const isAbove = index % 2 === 0;
     const verticalOffset = Math.floor((index + 2) / 2) * BONE_SPACING;
-    const yOffset = isAbove ? -verticalOffset : verticalOffset;
-
     const childX = parentCenterX + xDir * (index + 1) * BONE_ANGLE_X - cfg.nodeWidth * 0.4;
-    const childY = parentCenterY + yOffset - cfg.nodeHeight * 0.4;
+    const childY = parentCenterY + (isAbove ? -verticalOffset : verticalOffset) - cfg.nodeHeight * 0.4;
 
     const childRendered: RenderedNode = {
       node: child,
@@ -362,15 +236,13 @@ function layoutChildrenFishbone(
       children: [],
     };
 
-    // Recursively layout children with fishbone context
+    // Recursively layout grandchildren
     if (!child.collapsed && child.children.length > 0) {
       const childEffectiveStructure = child.structure || inheritedStructure;
       if (childEffectiveStructure === 'fishbone') {
-        // Continue fishbone pattern for sub-bones
         layoutFishboneSubBones(childRendered, child, level + 1, cfg, childEffectiveStructure, isAbove, xDir);
       } else {
-        // Child overrides with different structure
-        layoutBranchWithStructure(childRendered, child, direction, level + 1, cfg, childEffectiveStructure);
+        layoutChildren(childRendered, child, direction, level + 1, cfg, childEffectiveStructure);
       }
     }
 
@@ -378,7 +250,7 @@ function layoutChildrenFishbone(
   });
 }
 
-// Layout sub-bones for fishbone (smaller diagonal branches)
+// Sub-bones for fishbone (smaller diagonal branches continuing the pattern)
 function layoutFishboneSubBones(
   parentRendered: RenderedNode,
   node: MindMapNode,
@@ -394,7 +266,6 @@ function layoutFishboneSubBones(
 
   node.children.forEach((child, index) => {
     const childEffectiveStructure = child.structure || inheritedStructure;
-
     const subX = parentRendered.x + xDir * (index + 1) * SUB_BONE_X;
     const subY = parentRendered.y + subDir * (index + 1) * SUB_BONE_Y;
 
@@ -415,7 +286,7 @@ function layoutFishboneSubBones(
         layoutFishboneSubBones(subRendered, child, level + 1, cfg, childEffectiveStructure, isAboveBranch, xDir);
       } else {
         const dir: LayoutDirection = xDir > 0 ? 'left' : 'right';
-        layoutBranchWithStructure(subRendered, child, dir, level + 1, cfg, childEffectiveStructure);
+        layoutChildren(subRendered, child, dir, level + 1, cfg, childEffectiveStructure);
       }
     }
 
@@ -423,8 +294,19 @@ function layoutFishboneSubBones(
   });
 }
 
-// Helper to layout children when structure changes mid-tree
-function layoutBranchWithStructure(
+// Layout function registry - maps structure types to their layout functions
+const layoutRegistry: Record<string, LayoutChildrenFn> = {
+  fishbone: layoutChildrenFishbone,
+  orgchart: layoutChildrenOrgChart,
+  timeline: layoutChildrenTimeline,
+  // These all use horizontal layout (differ only in connection style)
+  mindmap: layoutChildrenHorizontal,
+  tree: layoutChildrenHorizontal,
+  logic: layoutChildrenHorizontal,
+};
+
+// Dispatch to appropriate layout function based on structure
+function layoutChildren(
   parentRendered: RenderedNode,
   node: MindMapNode,
   direction: LayoutDirection,
@@ -432,25 +314,41 @@ function layoutBranchWithStructure(
   cfg: LayoutConfig,
   effectiveStructure?: StructureType
 ): void {
-  switch (effectiveStructure) {
-    case 'fishbone':
-      layoutChildrenFishbone(parentRendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'orgchart':
-      layoutChildrenOrgChart(parentRendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'tree':
-      layoutChildrenTree(parentRendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'logic':
-      layoutChildrenLogic(parentRendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    case 'timeline':
-      layoutChildrenTimeline(parentRendered, node, direction, level, cfg, effectiveStructure);
-      break;
-    default:
-      layoutChildrenMindMap(parentRendered, node, direction, level, cfg, effectiveStructure);
+  const layoutFn = (effectiveStructure && layoutRegistry[effectiveStructure]) || layoutChildrenHorizontal;
+  layoutFn(parentRendered, node, direction, level, cfg, effectiveStructure);
+}
+
+function layoutBranch(
+  node: MindMapNode,
+  x: number,
+  y: number,
+  direction: LayoutDirection,
+  level: number,
+  cfg: LayoutConfig,
+  parent: RenderedNode,
+  inheritedStructure?: StructureType
+): RenderedNode {
+  const finalX = node.position?.x ?? x;
+  const finalY = node.position?.y ?? y;
+  const effectiveStructure = node.structure || inheritedStructure;
+
+  const rendered: RenderedNode = {
+    node,
+    x: finalX,
+    y: finalY,
+    width: cfg.nodeWidth,
+    height: cfg.nodeHeight,
+    collapsed: node.collapsed || false,
+    level,
+    parent,
+    children: [],
+  };
+
+  if (!node.collapsed && node.children.length > 0) {
+    layoutChildren(rendered, node, direction, level, cfg, effectiveStructure);
   }
+
+  return rendered;
 }
 
 function calculateSubtreeHeight(node: MindMapNode, cfg: LayoutConfig, inheritedStructure?: StructureType): number {
