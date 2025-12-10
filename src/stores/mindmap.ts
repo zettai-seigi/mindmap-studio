@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
+import { getDefaultTheme } from '../themes';
+
+// LocalStorage keys
+const STORAGE_KEY_MAP = 'mindmap-studio-map';
+const STORAGE_KEY_VIEW = 'mindmap-studio-view';
+const STORAGE_KEY_FORMAT = 'mindmap-studio-format';
 import type {
   MindMap,
   MindMapNode,
@@ -8,6 +14,7 @@ import type {
   ViewState,
   Relationship,
   Boundary,
+  Summary,
   MapTheme,
   StructureType,
   Marker,
@@ -16,20 +23,8 @@ import type {
   FloatingClipart,
 } from '../types';
 
-// Default theme
-const defaultTheme: MapTheme = {
-  id: 'default',
-  name: 'Default',
-  colors: {
-    background: '#ffffff',
-    rootNode: '#1e40af',
-    branches: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'],
-    text: '#1f2937',
-    lines: '#94a3b8',
-  },
-  handDrawn: false,
-  rainbowBranches: true,
-};
+// Default theme - imported from themes
+const defaultTheme: MapTheme = getDefaultTheme();
 
 // Sheet format settings interface
 export interface SheetFormat {
@@ -116,6 +111,9 @@ export const useMindMapStore = defineStore('mindmap', () => {
     draggingNodeId: null,
     dragOffset: null,
     selectionBox: null,
+    selectedRelationshipId: null,
+    selectedBoundaryId: null,
+    selectedSummaryId: null,
     linkMode: {
       active: false,
       sourceId: null,
@@ -145,6 +143,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
   const structure = computed(() => currentMap.value.structure);
   const relationships = computed(() => currentMap.value.relationships);
   const boundaries = computed(() => currentMap.value.boundaries);
+  const summaries = computed(() => currentMap.value.summaries);
   const floatingTopics = computed(() => currentMap.value.floatingTopics);
   const floatingCliparts = computed(() => currentMap.value.floatingCliparts);
 
@@ -286,6 +285,47 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
     saveHistory();
     node.notes = notes;
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function updateNodeStyle(nodeId: string, style: Partial<{
+    shape: string;
+    backgroundColor: string;
+    borderColor: string;
+    borderWidth: number;
+    textColor: string;
+    fontSize: number;
+    fontFamily: string;
+    fontWeight: 'normal' | 'bold';
+    fontStyle: 'normal' | 'italic';
+    padding: number;
+    shadow: boolean;
+    opacity: number;
+  }>) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    if (!node.style) {
+      node.style = {};
+    }
+    Object.assign(node.style, style);
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  // Set node-level structure (affects how this node's children are laid out)
+  function setNodeStructure(nodeId: string, structure: StructureType | undefined) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    saveHistory();
+    if (structure === undefined) {
+      delete node.structure;
+    } else {
+      node.structure = structure;
+    }
     node.updatedAt = Date.now();
     currentMap.value.updatedAt = Date.now();
   }
@@ -456,6 +496,194 @@ export const useMindMapStore = defineStore('mindmap', () => {
     node.updatedAt = Date.now();
   }
 
+  function expandNode(nodeId: string) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+
+    if (node.collapsed) {
+      node.collapsed = false;
+      node.updatedAt = Date.now();
+    }
+  }
+
+  function expandParentsOf(nodeId: string) {
+    let parent = findParentNode(nodeId);
+    while (parent) {
+      if (parent.collapsed) {
+        parent.collapsed = false;
+        parent.updatedAt = Date.now();
+      }
+      parent = findParentNode(parent.id);
+    }
+  }
+
+  function moveNodeUp(nodeId: string) {
+    const parent = findParentNode(nodeId);
+    if (!parent) return;
+
+    const index = parent.children.findIndex(c => c.id === nodeId);
+    if (index <= 0) return;
+
+    const currentNode = parent.children[index];
+    const prevNode = parent.children[index - 1];
+    if (!currentNode || !prevNode) return;
+
+    saveHistory();
+    // Swap with previous sibling
+    parent.children[index - 1] = currentNode;
+    parent.children[index] = prevNode;
+    parent.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function moveNodeDown(nodeId: string) {
+    const parent = findParentNode(nodeId);
+    if (!parent) return;
+
+    const index = parent.children.findIndex(c => c.id === nodeId);
+    if (index === -1 || index >= parent.children.length - 1) return;
+
+    const currentNode = parent.children[index];
+    const nextNode = parent.children[index + 1];
+    if (!currentNode || !nextNode) return;
+
+    saveHistory();
+    // Swap with next sibling
+    parent.children[index] = nextNode;
+    parent.children[index + 1] = currentNode;
+    parent.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function sortChildrenAlphabetically(nodeId: string) {
+    const node = findNodeById(nodeId);
+    if (!node || node.children.length < 2) return;
+
+    saveHistory();
+    node.children.sort((a, b) => a.text.localeCompare(b.text, undefined, { sensitivity: 'base' }));
+    node.updatedAt = Date.now();
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  // Calculate aggregated progress for a node based on children with checkboxes/tasks
+  function calculateChildrenProgress(nodeId: string): number | null {
+    const node = findNodeById(nodeId);
+    if (!node || node.children.length === 0) return null;
+
+    // Check if all children have tasks with progress
+    const childrenWithTasks = node.children.filter(child => child.task !== undefined);
+    if (childrenWithTasks.length === 0) return null;
+
+    // Only show roll-up if ALL children have tasks
+    if (childrenWithTasks.length !== node.children.length) return null;
+
+    // Calculate average progress
+    const totalProgress = childrenWithTasks.reduce((sum, child) => {
+      return sum + (child.task?.progress || 0);
+    }, 0);
+
+    return Math.round(totalProgress / childrenWithTasks.length);
+  }
+
+  // Create mind map from clipboard text (supports plain text, markdown, bullet lists)
+  function createMapFromClipboard(text: string): MindMapNode | null {
+    if (!text.trim()) return null;
+
+    const lines = text.split('\n').filter(line => line.trim());
+    if (lines.length === 0) return null;
+
+    // Parse the structure
+    const rootText = lines[0]?.replace(/^#+\s*/, '').replace(/^[-*•]\s*/, '').trim() || 'New Mind Map';
+    const rootNode = createNode(rootText);
+
+    // Parse remaining lines as children
+    const parseIndentedLines = (startIndex: number, parentIndent: number): MindMapNode[] => {
+      const children: MindMapNode[] = [];
+      let i = startIndex;
+
+      while (i < lines.length) {
+        const line = lines[i] || '';
+        const trimmed = line.trim();
+        if (!trimmed) {
+          i++;
+          continue;
+        }
+
+        // Calculate indent level
+        const indent = line.search(/\S|$/);
+
+        // If this line has less or equal indent than parent, we're done with this level
+        if (indent <= parentIndent && i !== startIndex) {
+          break;
+        }
+
+        // Clean the text (remove markdown/bullet markers)
+        const cleanText = trimmed
+          .replace(/^#+\s*/, '')      // Remove markdown headers
+          .replace(/^[-*•+]\s*/, '')  // Remove bullet points
+          .replace(/^\d+\.\s*/, '')   // Remove numbered lists
+          .replace(/^\[.\]\s*/, '')   // Remove checkboxes [x] or [ ]
+          .trim();
+
+        if (cleanText) {
+          const childNode = createNode(cleanText);
+
+          // Check if it was a checkbox and set task info
+          if (/^\[x\]/i.test(trimmed.replace(/^[-*•+]\s*/, ''))) {
+            childNode.task = { progress: 100, priority: 0, completed: true };
+          } else if (/^\[\s\]/.test(trimmed.replace(/^[-*•+]\s*/, ''))) {
+            childNode.task = { progress: 0, priority: 0, completed: false };
+          }
+
+          i++;
+
+          // Recursively parse children of this node
+          if (i < lines.length) {
+            const nextLine = lines[i] || '';
+            const nextIndent = nextLine.search(/\S|$/);
+            if (nextIndent > indent) {
+              const result = parseIndentedLines(i, indent);
+              childNode.children = result;
+              // Find where we stopped
+              let skipCount = 0;
+              const countChildren = (nodes: MindMapNode[]): number => {
+                let count = nodes.length;
+                for (const n of nodes) {
+                  count += countChildren(n.children);
+                }
+                return count;
+              };
+              skipCount = countChildren(result);
+              i += skipCount;
+            }
+          }
+
+          children.push(childNode);
+        } else {
+          i++;
+        }
+      }
+
+      return children;
+    };
+
+    if (lines.length > 1) {
+      rootNode.children = parseIndentedLines(1, -1);
+    }
+
+    return rootNode;
+  }
+
+  function importFromClipboardText(text: string) {
+    const rootNode = createMapFromClipboard(text);
+    if (!rootNode) return;
+
+    saveHistory();
+    currentMap.value.root = rootNode;
+    currentMap.value.name = rootNode.text;
+    currentMap.value.updatedAt = Date.now();
+  }
+
   function setNodePosition(nodeId: string, position: Position) {
     const node = findNodeById(nodeId);
     if (!node) return;
@@ -570,11 +798,36 @@ export const useMindMapStore = defineStore('mindmap', () => {
     currentMap.value.updatedAt = Date.now();
   }
 
+  function updateRelationship(relationshipId: string, updates: Partial<{
+    label: string;
+    labelOffset: Position;
+    style: 'solid' | 'dashed' | 'dotted';
+    color: string;
+    curvature: number;
+    startArrow: boolean;
+    endArrow: boolean;
+    controlPoint1: Position;
+    controlPoint2: Position;
+  }>, saveToHistory: boolean = true) {
+    const rel = currentMap.value.relationships.find(r => r.id === relationshipId);
+    if (!rel) return;
+
+    if (saveToHistory) {
+      saveHistory();
+    }
+    Object.assign(rel, updates);
+    currentMap.value.updatedAt = Date.now();
+  }
+
   // ============================================
   // Boundary Operations
   // ============================================
 
-  function addBoundary(nodeIds: string[], label?: string): Boundary | null {
+  function addBoundary(
+    nodeIds: string[],
+    label?: string,
+    shape: Boundary['shape'] = 'rounded'
+  ): Boundary | null {
     if (nodeIds.length === 0) return null;
 
     saveHistory();
@@ -582,7 +835,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
       id: uuidv4(),
       nodeIds,
       label,
-      shape: 'rounded',
+      shape,
       color: '#3b82f6',
       backgroundColor: '#3b82f620',
       opacity: 0.5,
@@ -595,6 +848,37 @@ export const useMindMapStore = defineStore('mindmap', () => {
   function removeBoundary(boundaryId: string) {
     saveHistory();
     currentMap.value.boundaries = currentMap.value.boundaries.filter(b => b.id !== boundaryId);
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function updateBoundary(boundaryId: string, updates: Partial<Boundary>) {
+    const boundary = currentMap.value.boundaries.find(b => b.id === boundaryId);
+    if (!boundary) return;
+
+    saveHistory();
+    Object.assign(boundary, updates);
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  // ============================================
+  // Summary Operations
+  // ============================================
+
+  function updateSummary(summaryId: string, updates: Partial<Summary>) {
+    const summary = currentMap.value.summaries.find(s => s.id === summaryId);
+    if (!summary) return;
+
+    saveHistory();
+    Object.assign(summary, updates);
+    currentMap.value.updatedAt = Date.now();
+  }
+
+  function removeSummary(summaryId: string) {
+    saveHistory();
+    currentMap.value.summaries = currentMap.value.summaries.filter(s => s.id !== summaryId);
+    if (canvasState.value.selectedSummaryId === summaryId) {
+      canvasState.value.selectedSummaryId = null;
+    }
     currentMap.value.updatedAt = Date.now();
   }
 
@@ -632,6 +916,36 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
   function clearSelection() {
     canvasState.value.selectedNodeIds = [];
+    canvasState.value.selectedRelationshipId = null;
+    canvasState.value.selectedBoundaryId = null;
+    canvasState.value.selectedSummaryId = null;
+  }
+
+  function selectRelationship(relationshipId: string | null) {
+    canvasState.value.selectedRelationshipId = relationshipId;
+    if (relationshipId) {
+      canvasState.value.selectedNodeIds = [];
+      canvasState.value.selectedBoundaryId = null;
+      canvasState.value.selectedSummaryId = null;
+    }
+  }
+
+  function selectBoundary(boundaryId: string | null) {
+    canvasState.value.selectedBoundaryId = boundaryId;
+    if (boundaryId) {
+      canvasState.value.selectedNodeIds = [];
+      canvasState.value.selectedRelationshipId = null;
+      canvasState.value.selectedSummaryId = null;
+    }
+  }
+
+  function selectSummary(summaryId: string | null) {
+    canvasState.value.selectedSummaryId = summaryId;
+    if (summaryId) {
+      canvasState.value.selectedNodeIds = [];
+      canvasState.value.selectedRelationshipId = null;
+      canvasState.value.selectedBoundaryId = null;
+    }
   }
 
   function startEditing(nodeId: string) {
@@ -728,6 +1042,97 @@ export const useMindMapStore = defineStore('mindmap', () => {
   }
 
   // ============================================
+  // LocalStorage Persistence
+  // ============================================
+
+  function saveToLocalStorage() {
+    try {
+      localStorage.setItem(STORAGE_KEY_MAP, JSON.stringify(currentMap.value));
+      localStorage.setItem(STORAGE_KEY_VIEW, JSON.stringify({
+        zoom: viewState.value.zoom,
+        panX: viewState.value.panX,
+        panY: viewState.value.panY,
+      }));
+      localStorage.setItem(STORAGE_KEY_FORMAT, JSON.stringify(sheetFormat.value));
+    } catch (e) {
+      console.warn('Failed to save to localStorage:', e);
+    }
+  }
+
+  function loadFromLocalStorage(): boolean {
+    try {
+      const savedMap = localStorage.getItem(STORAGE_KEY_MAP);
+      const savedView = localStorage.getItem(STORAGE_KEY_VIEW);
+      const savedFormat = localStorage.getItem(STORAGE_KEY_FORMAT);
+
+      if (savedMap) {
+        const map = JSON.parse(savedMap) as MindMap;
+        currentMap.value = map;
+        history.value = [JSON.parse(JSON.stringify(map))];
+        historyIndex.value = 0;
+
+        if (savedView) {
+          const view = JSON.parse(savedView);
+          viewState.value.zoom = view.zoom ?? 1;
+          viewState.value.panX = view.panX ?? 0;
+          viewState.value.panY = view.panY ?? 0;
+        }
+
+        if (savedFormat) {
+          sheetFormat.value = { ...defaultSheetFormat, ...JSON.parse(savedFormat) };
+        }
+
+        return true;
+      }
+    } catch (e) {
+      console.warn('Failed to load from localStorage:', e);
+    }
+    return false;
+  }
+
+  function clearLocalStorage() {
+    localStorage.removeItem(STORAGE_KEY_MAP);
+    localStorage.removeItem(STORAGE_KEY_VIEW);
+    localStorage.removeItem(STORAGE_KEY_FORMAT);
+  }
+
+  // Auto-save when map changes (debounced via updatedAt)
+  let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  watch(
+    () => currentMap.value.updatedAt,
+    () => {
+      // Debounce saves to avoid too frequent writes
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        saveToLocalStorage();
+      }, 500);
+    }
+  );
+
+  // Also save view state and format changes
+  watch(
+    [() => viewState.value.zoom, () => viewState.value.panX, () => viewState.value.panY],
+    () => {
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        saveToLocalStorage();
+      }, 500);
+    }
+  );
+
+  watch(
+    sheetFormat,
+    () => {
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        saveToLocalStorage();
+      }, 500);
+    },
+    { deep: true }
+  );
+
+  // ============================================
   // Link Mode
   // ============================================
 
@@ -765,6 +1170,7 @@ export const useMindMapStore = defineStore('mindmap', () => {
     structure,
     relationships,
     boundaries,
+    summaries,
     floatingTopics,
     floatingCliparts,
     selectedNodes,
@@ -781,12 +1187,21 @@ export const useMindMapStore = defineStore('mindmap', () => {
     removeFloatingClipart,
     updateNodeText,
     updateNodeNotes,
+    updateNodeStyle,
+    setNodeStructure,
     deleteNode,
     moveNode,
+    moveNodeUp,
+    moveNodeDown,
+    sortChildrenAlphabetically,
     toggleCollapse,
+    expandNode,
+    expandParentsOf,
     setNodePosition,
     clearNodePosition,
     clearAllPositions,
+    calculateChildrenProgress,
+    importFromClipboardText,
 
     // Markers & Labels
     addMarker,
@@ -805,10 +1220,16 @@ export const useMindMapStore = defineStore('mindmap', () => {
     // Relationships
     addRelationship,
     removeRelationship,
+    updateRelationship,
 
     // Boundaries
     addBoundary,
     removeBoundary,
+    updateBoundary,
+
+    // Summaries
+    updateSummary,
+    removeSummary,
 
     // History
     undo,
@@ -816,6 +1237,9 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
     // Selection
     selectNode,
+    selectRelationship,
+    selectBoundary,
+    selectSummary,
     clearSelection,
     startEditing,
     stopEditing,
@@ -845,5 +1269,10 @@ export const useMindMapStore = defineStore('mindmap', () => {
     startLinkMode,
     cancelLinkMode,
     completeLinkMode,
+
+    // Persistence
+    saveToLocalStorage,
+    loadFromLocalStorage,
+    clearLocalStorage,
   };
 });
