@@ -27,7 +27,7 @@ interface XMindTopic {
   id: string;
   class?: string;
   title: string;
-  structureClass?: string;  // Node-level structure override (e.g., 'org.xmind.ui.fishbone.rightHeaded')
+  structureClass?: string;  // Node-level structure override (e.g., 'org.xmind.ui.tree.right')
   position?: {
     x: number;
     y: number;
@@ -137,20 +137,12 @@ function xmindTopicToNode(topic: XMindTopic, isFloating: boolean = false, isRoot
   // Map XMind structureClass to our structure type and direction
   if (topic.structureClass) {
     const structureMap: Record<string, StructureType> = {
-      'org.xmind.ui.fishbone.rightHeaded': 'fishbone',
-      'org.xmind.ui.fishbone.leftHeaded': 'fishbone',
-      'org.xmind.ui.fishbone.NE.normal': 'fishbone',
-      'org.xmind.ui.fishbone.NW.normal': 'fishbone',
-      'org.xmind.ui.fishbone.SE.normal': 'fishbone',
-      'org.xmind.ui.fishbone.SW.normal': 'fishbone',
       'org.xmind.ui.tree.right': 'tree',
       'org.xmind.ui.tree.left': 'tree',
       'org.xmind.ui.logic.right': 'logic',
       'org.xmind.ui.logic.left': 'logic',
       'org.xmind.ui.org-chart.down': 'orgchart',
       'org.xmind.ui.org-chart.up': 'orgchart',
-      'org.xmind.ui.timeline.horizontal': 'timeline',
-      'org.xmind.ui.timeline.vertical': 'timeline',
       'org.xmind.ui.map.clockwise': 'mindmap',
       'org.xmind.ui.map.anticlockwise': 'mindmap',
       'org.xmind.ui.map.unbalanced': 'mindmap',
@@ -161,11 +153,10 @@ function xmindTopicToNode(topic: XMindTopic, isFloating: boolean = false, isRoot
     }
 
     // Extract direction from structureClass for structures that have it
-    // rightHeaded/right = children go left, leftHeaded/left = children go right
-    if (topic.structureClass.includes('rightHeaded') || topic.structureClass.includes('.right')) {
-      node.direction = 'right';  // Head on right, children extend left
-    } else if (topic.structureClass.includes('leftHeaded') || topic.structureClass.includes('.left')) {
-      node.direction = 'left';   // Head on left, children extend right
+    if (topic.structureClass.includes('.right')) {
+      node.direction = 'right';
+    } else if (topic.structureClass.includes('.left')) {
+      node.direction = 'left';
     }
   }
 

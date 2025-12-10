@@ -3,16 +3,24 @@
 // ============================================
 
 export type StructureType =
-  | 'mindmap'      // Classic radial structure
-  | 'logic'        // Linear flow (left-to-right)
-  | 'brace'        // Mathematical grouping with braces
-  | 'orgchart'     // Hierarchical top-down
-  | 'fishbone'     // Cause-and-effect (Ishikawa)
-  | 'timeline'     // Chronological
-  | 'matrix'       // Two-dimensional table
-  | 'tree'         // Tree chart
-  | 'treetable'    // Spreadsheet-like
-  | 'grid';        // Block-based layout
+  | 'mindmap'           // Map: first half right, second half left (reversed)
+  | 'mindmap-anti'      // Map (Anti-Clockwise): first half left, second half right (reversed)
+  | 'mindmap-down'      // Balanced Map (Up to Down): both sides top to bottom, not reversed
+  | 'mindmap-clockwise' // Balanced Map (Clockwise): same as Map
+  | 'logic'             // Linear flow (left-to-right)
+  | 'logic-right'       // Logic Chart (Right): vertical bracket on right, children go right
+  | 'logic-left'        // Logic Chart (Left): vertical bracket on left, children go left
+  | 'brace'             // Mathematical grouping with braces
+  | 'orgchart'          // Org Chart (Down): root at top, children below
+  | 'orgchart-up'       // Org Chart (Up): root at bottom, children above
+  | 'orgchart-right'    // Org Chart (Right): all children go right
+  | 'orgchart-left'     // Org Chart (Left): all children go left
+  | 'tree-right'        // Tree Chart (Right): vertical spine, children branch right
+  | 'tree-left'         // Tree Chart (Left): vertical spine, children branch left
+  | 'tree'              // Tree chart
+  | 'matrix'            // Two-dimensional table
+  | 'treetable'         // Spreadsheet-like
+  | 'grid';             // Block-based layout
 
 export type NodeShape =
   | 'rectangle'

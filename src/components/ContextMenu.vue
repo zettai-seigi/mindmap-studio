@@ -22,12 +22,16 @@ const menuRef = ref<HTMLDivElement | null>(null);
 const showStructureSubmenu = ref(false);
 
 const layouts = [
-  { id: 'mindmap', name: 'Mind Map', icon: '🧠' },
-  { id: 'orgchart', name: 'Org Chart', icon: '🏢' },
-  { id: 'tree', name: 'Tree Chart', icon: '🌳' },
-  { id: 'logic', name: 'Logic Chart', icon: '➡️' },
-  { id: 'fishbone', name: 'Fishbone', icon: '🐟' },
-  { id: 'timeline', name: 'Timeline', icon: '📅' },
+  { id: 'mindmap', name: 'Map', icon: '🧠' },
+  { id: 'mindmap-anti', name: 'Balanced Map (Anti-Clockwise)', icon: '🔄' },
+  { id: 'mindmap-down', name: 'Balanced Map (Up to Down)', icon: '⬇️' },
+  { id: 'mindmap-clockwise', name: 'Balanced Map (Clockwise)', icon: '🔃' },
+  { id: 'orgchart', name: 'Org Chart (Down)', icon: '🏢' },
+  { id: 'orgchart-up', name: 'Org Chart (Up)', icon: '⬆️' },
+  { id: 'tree-right', name: 'Tree Chart (Right)', icon: '🌳' },
+  { id: 'tree-left', name: 'Tree Chart (Left)', icon: '🌳' },
+  { id: 'logic-right', name: 'Logic Chart (Right)', icon: '➡️' },
+  { id: 'logic-left', name: 'Logic Chart (Left)', icon: '⬅️' },
 ];
 
 // Get the selected node for checking its structure

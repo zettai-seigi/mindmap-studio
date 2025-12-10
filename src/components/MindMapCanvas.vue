@@ -312,25 +312,9 @@ function drawConnection(
 
   // Determine effective structure: node's own structure overrides inherited, then global
   const effectiveStructure = parent.node.structure || inheritedStructure || store.structure;
-
-  // Fishbone structure (either node-level or inherited): draw diagonal lines
-  if (effectiveStructure === 'fishbone') {
-    const startX = parent.x + parent.width / 2;
-    const startY = parent.y + parent.height / 2;
-    const endX = child.x + child.width / 2;
-    const endY = child.y + child.height / 2;
-
-    // Simple diagonal line for fishbone children
-    c.beginPath();
-    c.moveTo(startX, startY);
-    c.lineTo(endX, endY);
-    c.stroke();
-    return;
-  }
-
   const structure = effectiveStructure;
 
-  // Org Chart / Tree: straight lines from bottom-center of parent to top-center of child
+  // Org Chart (Down) / Tree: straight lines from bottom-center of parent to top-center of child
   if (structure === 'orgchart' || structure === 'tree') {
     const startX = parent.x + parent.width / 2;
     const startY = parent.y + parent.height;
@@ -345,6 +329,46 @@ function drawConnection(
     c.lineTo(startX, midY);  // Vertical down from parent
     c.lineTo(endX, midY);    // Horizontal to align with child
     c.lineTo(endX, endY);    // Vertical down to child
+    c.stroke();
+    return;
+  }
+
+  // Org Chart (Up): straight lines from top-center of parent to bottom-center of child
+  if (structure === 'orgchart-up') {
+    const startX = parent.x + parent.width / 2;
+    const startY = parent.y;
+    const endX = child.x + child.width / 2;
+    const endY = child.y + child.height;
+
+    // Draw elbow connection (straight lines with right angles) - going up
+    const midY = (startY + endY) / 2;
+
+    c.beginPath();
+    c.moveTo(startX, startY);
+    c.lineTo(startX, midY);  // Vertical up from parent
+    c.lineTo(endX, midY);    // Horizontal to align with child
+    c.lineTo(endX, endY);    // Vertical up to child
+    c.stroke();
+    return;
+  }
+
+  // Tree Chart (Right/Left): vertical spine from center of each node
+  if (structure === 'tree-right' || structure === 'tree-left' || structure === 'orgchart-right' || structure === 'orgchart-left') {
+    const isRight = structure === 'tree-right' || structure === 'orgchart-right';
+
+    // Spine is always at the CENTER of the parent node
+    const spineX = parent.x + parent.width / 2;
+    const startY = parent.y + parent.height;  // Bottom of parent
+
+    // Child's connection point - left or right edge depending on direction
+    const endX = isRight ? child.x : child.x + child.width;
+    const endY = child.y + child.height / 2;
+
+    c.beginPath();
+    // Vertical down from parent center, then horizontal to child
+    c.moveTo(spineX, startY);
+    c.lineTo(spineX, endY);  // Vertical spine down to child's Y level
+    c.lineTo(endX, endY);    // Horizontal to child
     c.stroke();
     return;
   }
@@ -367,27 +391,28 @@ function drawConnection(
     return;
   }
 
-  // Timeline: straight vertical/horizontal lines
-  if (structure === 'timeline') {
-    const startX = parent.x + parent.width / 2;
+  // Logic Chart (Right/Left): vertical bracket from parent edge
+  if (structure === 'logic-right' || structure === 'logic-left') {
+    const isRight = structure === 'logic-right';
+
+    // Bracket starts from parent's edge (right or left)
+    const bracketX = isRight ? parent.x + parent.width : parent.x;
     const startY = parent.y + parent.height / 2;
-    const endX = child.x + child.width / 2;
+
+    // Child's connection point
+    const endX = isRight ? child.x : child.x + child.width;
     const endY = child.y + child.height / 2;
 
-    // Main timeline items: horizontal line to item, then vertical
-    if (child.level === 1) {
-      c.beginPath();
-      c.moveTo(startX, startY);
-      c.lineTo(endX, startY);  // Horizontal along timeline
-      c.lineTo(endX, endY);    // Vertical to item
-      c.stroke();
-    } else {
-      // Sub-items: vertical line
-      c.beginPath();
-      c.moveTo(startX, startY);
-      c.lineTo(endX, endY);
-      c.stroke();
-    }
+    // Vertical bracket position (halfway between parent edge and child)
+    const verticalX = (bracketX + endX) / 2;
+
+    c.beginPath();
+    // Horizontal from parent edge, then vertical, then horizontal to child
+    c.moveTo(bracketX, startY);
+    c.lineTo(verticalX, startY);  // Horizontal to vertical line position
+    c.lineTo(verticalX, endY);    // Vertical to child Y
+    c.lineTo(endX, endY);         // Horizontal to child
+    c.stroke();
     return;
   }
 
