@@ -77,6 +77,8 @@ function createNode(text: string): MindMapNode {
 // Create a new map
 function createMap(name: string): MindMap {
   const rootNode = createNode(name);
+  // Set default structure on root node
+  rootNode.structure = 'mindmap';
   return {
     id: uuidv4(),
     name,
@@ -87,7 +89,7 @@ function createMap(name: string): MindMap {
     boundaries: [],
     summaries: [],
     theme: { ...defaultTheme },
-    structure: 'mindmap',
+    structure: 'mindmap', // Kept for backwards compatibility, but root.structure is the source of truth
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -140,7 +142,8 @@ export const useMindMapStore = defineStore('mindmap', () => {
 
   const root = computed(() => currentMap.value.root);
   const theme = computed(() => currentMap.value.theme);
-  const structure = computed(() => currentMap.value.structure);
+  // Structure is derived from root node's structure (or fallback to 'mindmap')
+  const structure = computed(() => currentMap.value.root.structure || 'mindmap');
   const relationships = computed(() => currentMap.value.relationships);
   const boundaries = computed(() => currentMap.value.boundaries);
   const summaries = computed(() => currentMap.value.summaries);
@@ -994,9 +997,8 @@ export const useMindMapStore = defineStore('mindmap', () => {
   }
 
   function setStructure(structure: StructureType) {
-    saveHistory();
-    currentMap.value.structure = structure;
-    currentMap.value.updatedAt = Date.now();
+    // Set structure on root node (same as setNodeStructure for root)
+    setNodeStructure(currentMap.value.root.id, structure);
   }
 
   // ============================================

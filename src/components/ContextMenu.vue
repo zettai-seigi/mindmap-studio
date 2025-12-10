@@ -42,8 +42,8 @@ const selectedNode = computed(() => {
 // Check if node has a custom structure set
 const nodeStructure = computed(() => selectedNode.value?.structure);
 
-// Submenu states
-const showNodeStructureSubmenu = ref(false);
+// Check if this is the root node
+const isRootNode = computed(() => props.nodeId === store.root.id);
 
 const menuItems = [
   { id: 'add-child', label: 'Add Child Topic', icon: Plus, shortcut: 'Tab', requiresNode: true },
@@ -55,8 +55,7 @@ const menuItems = [
   { id: 'copy', label: 'Copy', icon: Copy, shortcut: 'Ctrl+C', requiresNode: true },
   { id: 'paste', label: 'Paste', icon: Clipboard, shortcut: 'Ctrl+V', requiresNode: true },
   { id: 'divider3', type: 'divider' },
-  { id: 'change-structure', label: 'Map Structure', icon: LayoutGrid, hasSubmenu: true, submenuType: 'global' },
-  { id: 'set-node-structure', label: 'Children Structure', icon: LayoutGrid, hasSubmenu: true, submenuType: 'node', requiresNode: true },
+  { id: 'set-structure', label: 'Structure', icon: LayoutGrid, hasSubmenu: true, requiresNode: true },
   { id: 'add-relationship', label: 'Add Relationship', icon: Link, requiresNode: true },
   { id: 'add-boundary', label: 'Add Boundary', icon: Box, requiresNode: true },
   { id: 'reset-position', label: 'Reset All Positions', icon: LayoutGrid, requiresNode: false },
@@ -97,27 +96,16 @@ function handleClick(itemId: string) {
     case 'reset-position':
       store.clearAllPositions();
       break;
-    case 'change-structure':
+    case 'set-structure':
       showStructureSubmenu.value = !showStructureSubmenu.value;
-      showNodeStructureSubmenu.value = false;
-      return; // Don't close menu
-    case 'set-node-structure':
-      showNodeStructureSubmenu.value = !showNodeStructureSubmenu.value;
-      showStructureSubmenu.value = false;
       return; // Don't close menu
   }
 
   emit('close');
 }
 
-// Change global map structure
-function handleStructureChange(layoutId: string) {
-  store.setStructure(layoutId as StructureType);
-  emit('close');
-}
-
-// Set node-level structure (affects how this node's children are laid out)
-function handleNodeStructureChange(layoutId: string | undefined) {
+// Set structure on the selected node (affects how its children are laid out)
+function handleStructureChange(layoutId: string | undefined) {
   if (!props.nodeId) return;
   store.setNodeStructure(props.nodeId, layoutId as StructureType | undefined);
   emit('close');
@@ -153,16 +141,17 @@ onUnmounted(() => {
           v-if="item.type === 'divider'"
           class="divider h-px mx-3 my-2"
         />
-        <!-- Global structure submenu -->
+        <!-- Structure submenu -->
         <div
-          v-else-if="item.hasSubmenu && item.submenuType === 'global'"
+          v-else-if="item.hasSubmenu && nodeId"
           class="submenu-wrapper relative"
-          @mouseenter="showStructureSubmenu = true; showNodeStructureSubmenu = false"
+          @mouseenter="showStructureSubmenu = true"
           @mouseleave="showStructureSubmenu = false"
         >
           <button class="menu-item w-full h-8 px-3 flex items-center gap-3 text-[13px]">
             <component :is="item.icon" :size="16" class="opacity-60 shrink-0" />
             <span class="flex-1 text-left">{{ item.label }}</span>
+            <span v-if="nodeStructure" class="node-structure-badge">{{ nodeStructure }}</span>
             <ChevronRight :size="14" class="opacity-40" />
           </button>
           <!-- Submenu -->
@@ -171,55 +160,25 @@ onUnmounted(() => {
             class="submenu absolute min-w-[180px] py-2 rounded-xl"
             style="left: calc(100% - 4px); top: -8px;"
           >
-            <button
-              v-for="layout in layouts"
-              :key="layout.id"
-              class="submenu-item w-full h-8 px-3 flex items-center gap-3 text-[13px]"
-              :class="{ 'active': store.structure === layout.id }"
-              @click="handleStructureChange(layout.id)"
-            >
-              <span class="text-base leading-none w-5 text-center">{{ layout.icon }}</span>
-              <span class="flex-1 text-left">{{ layout.name }}</span>
-              <span v-if="store.structure === layout.id" class="checkmark">✓</span>
-            </button>
-          </div>
-        </div>
-        <!-- Node-level structure submenu (Children Structure) -->
-        <div
-          v-else-if="item.hasSubmenu && item.submenuType === 'node' && nodeId"
-          class="submenu-wrapper relative"
-          @mouseenter="showNodeStructureSubmenu = true; showStructureSubmenu = false"
-          @mouseleave="showNodeStructureSubmenu = false"
-        >
-          <button class="menu-item w-full h-8 px-3 flex items-center gap-3 text-[13px]">
-            <component :is="item.icon" :size="16" class="opacity-60 shrink-0" />
-            <span class="flex-1 text-left">{{ item.label }}</span>
-            <span v-if="nodeStructure" class="node-structure-badge">{{ nodeStructure }}</span>
-            <ChevronRight :size="14" class="opacity-40" />
-          </button>
-          <!-- Submenu for node structure -->
-          <div
-            v-show="showNodeStructureSubmenu"
-            class="submenu absolute min-w-[180px] py-2 rounded-xl"
-            style="left: calc(100% - 4px); top: -8px;"
-          >
-            <!-- Inherit from parent option -->
-            <button
-              class="submenu-item w-full h-8 px-3 flex items-center gap-3 text-[13px]"
-              :class="{ 'active': !nodeStructure }"
-              @click="handleNodeStructureChange(undefined)"
-            >
-              <span class="text-base leading-none w-5 text-center">↩️</span>
-              <span class="flex-1 text-left">Inherit (Default)</span>
-              <span v-if="!nodeStructure" class="checkmark">✓</span>
-            </button>
-            <div class="submenu-divider h-px mx-3 my-1 bg-white/10" />
+            <!-- Inherit from parent option (only for non-root nodes) -->
+            <template v-if="!isRootNode">
+              <button
+                class="submenu-item w-full h-8 px-3 flex items-center gap-3 text-[13px]"
+                :class="{ 'active': !nodeStructure }"
+                @click="handleStructureChange(undefined)"
+              >
+                <span class="text-base leading-none w-5 text-center">↩️</span>
+                <span class="flex-1 text-left">Inherit from Parent</span>
+                <span v-if="!nodeStructure" class="checkmark">✓</span>
+              </button>
+              <div class="submenu-divider h-px mx-3 my-1 bg-white/10" />
+            </template>
             <button
               v-for="layout in layouts"
               :key="layout.id"
               class="submenu-item w-full h-8 px-3 flex items-center gap-3 text-[13px]"
               :class="{ 'active': nodeStructure === layout.id }"
-              @click="handleNodeStructureChange(layout.id)"
+              @click="handleStructureChange(layout.id)"
             >
               <span class="text-base leading-none w-5 text-center">{{ layout.icon }}</span>
               <span class="flex-1 text-left">{{ layout.name }}</span>
